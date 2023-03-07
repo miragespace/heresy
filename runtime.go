@@ -2,8 +2,10 @@ package heresy
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
@@ -14,31 +16,44 @@ import (
 )
 
 type Runtime struct {
-	instance  atomic.Pointer[runtimeInstance]
+	logger    *zap.Logger
 	registry  *require.Registry
 	scheduler *pond.WorkerPool
+	mu        sync.RWMutex
+	instance  *runtimeInstance
 }
 
 type runtimeInstance struct {
-	closeOnce       sync.Once
-	running         atomic.Bool
 	httpHandler     atomic.Value // goja.Value
 	runtimeResolver goja.Callable
 	eventLoop       *eventloop.EventLoop
+	nativePool      *nativeResolverPool
 }
 
-func NewRuntime(logger *zap.Logger, scriptName string, script string) (*Runtime, error) {
+func NewRuntime(logger *zap.Logger) (*Runtime, error) {
+	rt := &Runtime{
+		logger:    logger,
+		registry:  require.NewRegistry(),
+		scheduler: pond.New(10, 100),
+	}
+
+	return rt, nil
+}
+
+func (rt *Runtime) LoadScript(scriptName, script string) error {
 	prog, err := goja.Compile(scriptName, script, true)
 	if err != nil {
-		return nil, fmt.Errorf("error compiling script: %w", err)
+		return fmt.Errorf("error compiling script: %w", err)
 	}
 
-	useZapLogger := logger != nil
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 
-	rt := &Runtime{
-		registry:  require.NewRegistry(),
-		scheduler: pond.New(100, 1000, pond.MinWorkers(4)),
+	if rt.instance != nil {
+		rt.instance.eventLoop.StopNoWait()
 	}
+
+	useZapLogger := rt.logger != nil
 
 	eventLoop := eventloop.NewEventLoop(
 		eventloop.EnableConsole(!useZapLogger),
@@ -47,13 +62,11 @@ func NewRuntime(logger *zap.Logger, scriptName string, script string) (*Runtime,
 	eventLoop.Start()
 
 	if useZapLogger {
-		runtimeLogger := newZapPrinter(scriptName, logger)
-
+		runtimeLogger := newRuntimeLogger(scriptName, rt.logger)
 		loggerModule := console.RequireWithPrinter(runtimeLogger)
-		require.RegisterNativeModule(moduleName, loggerModule)
-
+		rt.registry.RegisterNativeModule(loggerModuleName, loggerModule)
 		eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-			vm.Set("console", require.Require(vm, moduleName))
+			vm.Set("console", require.Require(vm, loggerModuleName))
 		})
 	}
 
@@ -63,29 +76,39 @@ func NewRuntime(logger *zap.Logger, scriptName string, script string) (*Runtime,
 
 	err = <-rt.setupRuntime(prog, instance)
 	if err != nil {
-		rt.scheduler.Stop()
 		eventLoop.StopNoWait()
-		return nil, err
+		return err
 	}
 
-	rt.instance.Store(instance)
-	return rt, nil
+	rt.instance = instance
+	return nil
 }
 
 func (rt *Runtime) Stop() {
-	inst := rt.instance.Load()
-	inst.closeOnce.Do(func() {
-		inst.running.Store(false)
-		inst.eventLoop.StopNoWait()
-	})
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if rt.instance != nil {
+		rt.instance.eventLoop.StopNoWait()
+		rt.instance = nil
+	}
 	rt.scheduler.Stop()
 }
 
 func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan error {
 	setup := make(chan error, 1)
+
+	fetch := &fetchConfig{
+		eventLoop: inst.eventLoop,
+		scheduler: rt.scheduler,
+		client: &http.Client{
+			Timeout: time.Second * 15,
+		},
+	}
+
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		var err error
-		_, err = vm.RunProgram(runtimeResolverProg)
+		_, err = vm.RunProgram(nativePromiseResolverProg)
 		if err != nil {
 			setup <- fmt.Errorf("internal error: failed to setting up runtime resolver: %w", err)
 			return
@@ -105,11 +128,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 			}
 		})
 
-		withFetch(inst.eventLoop, vm, fetchConfig{
-			client:    nil,
-			scheduler: rt.scheduler,
-			eventLoop: inst.eventLoop,
-		})
+		fetch.Enable(vm)
 
 		_, err = vm.RunProgram(prog)
 		if err != nil {
@@ -117,7 +136,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 			return
 		}
 
-		inst.running.Store(true)
+		inst.nativePool = newResolverPool(vm)
 		setup <- nil
 	})
 	return setup
