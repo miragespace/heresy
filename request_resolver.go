@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/alitto/pond"
 	"github.com/dop251/goja"
-	"github.com/dop251/goja_nodejs/eventloop"
 )
 
 var resolverPool = sync.Pool{
@@ -19,8 +19,7 @@ var resolverPool = sync.Pool{
 
 func getRequestResolver(w http.ResponseWriter, req *http.Request) *requestResolver {
 	r := resolverPool.Get().(*requestResolver)
-	r.respWriter = w
-	r.req = req
+	r.respWriter, r.req = w, req
 	return r
 }
 
@@ -30,51 +29,58 @@ type requestResolver struct {
 	done       chan struct{}
 }
 
-func (r *requestResolver) NativeResolve(vm *goja.Runtime) func(v goja.Value) {
-	return func(v goja.Value) {
-		go func() {
+func (r *requestResolver) nativeResolveCallback(vm *goja.Runtime, scheduler *pond.WorkerPool) func(goja.FunctionCall) goja.Value {
+	return func(fc goja.FunctionCall) goja.Value {
+		scheduler.Submit(func() {
 			select {
 			case <-r.req.Context().Done():
 			default:
+				v := fc.Argument(0)
+				if goja.Undefined().Equals(v) {
+					return
+				}
 				fmt.Fprint(r.respWriter, v)
-				r.done <- struct{}{}
 			}
-		}()
+			r.done <- struct{}{}
+		})
+		return goja.Undefined()
 	}
 }
 
-func (r *requestResolver) NativeReject(vm *goja.Runtime) func(v goja.Value) {
-	return func(v goja.Value) {
-		go func() {
+func (r *requestResolver) nativeRejectCallback(vm *goja.Runtime, scheduler *pond.WorkerPool) func(goja.FunctionCall) goja.Value {
+	return func(fc goja.FunctionCall) goja.Value {
+		scheduler.Submit(func() {
 			select {
 			case <-r.req.Context().Done():
 			default:
+				v := fc.Argument(0)
+				if goja.Undefined().Equals(v) {
+					return
+				}
 				r.respWriter.WriteHeader(http.StatusInternalServerError)
 				fmt.Fprintf(r.respWriter, "Execution exception: %+v", v)
-				r.done <- struct{}{}
 			}
-		}()
+			r.done <- struct{}{}
+		})
+		return goja.Undefined()
 	}
 }
 
-func (r *requestResolver) Exception(err error) {
-	go func() {
+func (r *requestResolver) exceptionCallback(err error, scheduler *pond.WorkerPool) {
+	scheduler.Submit(func() {
 		select {
 		case <-r.req.Context().Done():
 		default:
 			r.respWriter.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(r.respWriter, "Unhandled exception: %+v", err)
-			r.done <- struct{}{}
 		}
-	}()
+		r.done <- struct{}{}
+	})
 }
 
-func (r *requestResolver) Wait(eventLoop *eventloop.EventLoop) {
-	select {
-	case <-r.req.Context().Done():
-	case <-r.done:
-		r.respWriter = nil
-		r.req = nil
-		resolverPool.Put(r)
-	}
+func (r *requestResolver) Wait() {
+	<-r.done
+	r.respWriter = nil
+	r.req = nil
+	resolverPool.Put(r)
 }

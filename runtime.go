@@ -2,8 +2,10 @@ package heresy
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 
+	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/console"
 	"github.com/dop251/goja_nodejs/eventloop"
@@ -12,9 +14,16 @@ import (
 )
 
 type Runtime struct {
-	httpHandler     atomic.Value // goja.Callable
-	runtimeResolver atomic.Value // goja.Callable
-	registry        *require.Registry
+	instance  atomic.Pointer[runtimeInstance]
+	registry  *require.Registry
+	scheduler *pond.WorkerPool
+}
+
+type runtimeInstance struct {
+	closeOnce       sync.Once
+	running         atomic.Bool
+	httpHandler     atomic.Value // goja.Value
+	runtimeResolver goja.Callable
 	eventLoop       *eventloop.EventLoop
 }
 
@@ -26,17 +35,15 @@ func NewRuntime(logger *zap.Logger, scriptName string, script string) (*Runtime,
 
 	useZapLogger := logger != nil
 
-	registry := require.NewRegistry()
-	eventLoop := eventloop.NewEventLoop(
-		eventloop.EnableConsole(!useZapLogger),
-		eventloop.WithRegistry(registry),
-	)
-
 	rt := &Runtime{
-		registry:  registry,
-		eventLoop: eventLoop,
+		registry:  require.NewRegistry(),
+		scheduler: pond.New(100, 1000, pond.MinWorkers(4)),
 	}
 
+	eventLoop := eventloop.NewEventLoop(
+		eventloop.EnableConsole(!useZapLogger),
+		eventloop.WithRegistry(rt.registry),
+	)
 	eventLoop.Start()
 
 	if useZapLogger {
@@ -50,22 +57,33 @@ func NewRuntime(logger *zap.Logger, scriptName string, script string) (*Runtime,
 		})
 	}
 
-	setup := make(chan error, 1)
-	rt.setupRuntime(prog, setup)
-	err = <-setup
+	instance := &runtimeInstance{
+		eventLoop: eventLoop,
+	}
+
+	err = <-rt.setupRuntime(prog, instance)
 	if err != nil {
+		rt.scheduler.Stop()
+		eventLoop.StopNoWait()
 		return nil, err
 	}
 
+	rt.instance.Store(instance)
 	return rt, nil
 }
 
 func (rt *Runtime) Stop() {
-	rt.eventLoop.Stop()
+	inst := rt.instance.Load()
+	inst.closeOnce.Do(func() {
+		inst.running.Store(false)
+		inst.eventLoop.StopNoWait()
+	})
+	rt.scheduler.Stop()
 }
 
-func (rt *Runtime) setupRuntime(prog *goja.Program, setup chan error) {
-	rt.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan error {
+	setup := make(chan error, 1)
+	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		var err error
 		_, err = vm.RunProgram(runtimeResolverProg)
 		if err != nil {
@@ -79,14 +97,19 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, setup chan error) {
 			setup <- fmt.Errorf("internal error: __runtimeResolver is not a function")
 			return
 		}
-		rt.runtimeResolver.Store(resolver)
+		inst.runtimeResolver = resolver
 
-		vm.Set("onRequest", func(fn goja.Value) {
+		vm.Set("registerRequestHandler", func(fn goja.Value) {
 			if _, ok := goja.AssertFunction(fn); ok {
-				rt.httpHandler.Store(fn)
+				inst.httpHandler.Store(fn)
 			}
 		})
-		WithFetch(rt.eventLoop, vm, nil)
+
+		withFetch(inst.eventLoop, vm, fetchConfig{
+			client:    nil,
+			scheduler: rt.scheduler,
+			eventLoop: inst.eventLoop,
+		})
 
 		_, err = vm.RunProgram(prog)
 		if err != nil {
@@ -94,6 +117,8 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, setup chan error) {
 			return
 		}
 
+		inst.running.Store(true)
 		setup <- nil
 	})
+	return setup
 }

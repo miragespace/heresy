@@ -5,9 +5,10 @@ import (
 	_ "net/http/pprof"
 	"os"
 
+	"go.miragespace.co/heresy"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"go.miragespace.co/heresy"
 	"go.uber.org/zap"
 )
 
@@ -15,14 +16,10 @@ const testScript = `
 "use strict";
 
 async function httpHandler(url) {
-    const results = await Promise.all([
-        fetch("http://google.com"),
-        fetch("http://baidu.com"),
-    ])
-    return results.join(", ")
+	return fetch("https://example.com/")
 }
 
-onRequest(httpHandler)
+registerRequestHandler(httpHandler)
 `
 
 func main() {
@@ -41,7 +38,7 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Mount("/debug", middleware.Profiler())
-	router.Handle("/*", http.HandlerFunc(rt.Handle))
+	router.Handle("/*", http.HandlerFunc(rt.Handler))
 
 	addr := ":8081"
 	if len(args) > 1 {
