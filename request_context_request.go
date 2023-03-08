@@ -9,8 +9,7 @@ import (
 
 type contextRequest struct {
 	*requestContext
-	nativeReq      *goja.Object
-	nativeGetValue goja.Value
+	nativeReq *goja.Object
 }
 
 var _ goja.DynamicObject = (*contextRequest)(nil)
@@ -20,7 +19,6 @@ func newContextRequest(ctx *requestContext) *contextRequest {
 		requestContext: ctx,
 	}
 	req.nativeReq = ctx.vm.NewDynamicObject(req)
-	req.nativeGetValue = ctx.vm.ToValue(req.nativeGet)
 	return req
 }
 
@@ -49,7 +47,7 @@ func (req *contextRequest) Get(key string) goja.Value {
 		}
 
 	case "get":
-		return req.nativeGetValue
+		return req.vm.ToValue(req.nativeGet)
 	case "res":
 		return req.responseProxy.nativeRes
 
