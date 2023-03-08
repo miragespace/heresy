@@ -3,15 +3,14 @@ package heresy
 import (
 	"fmt"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/dop251/goja"
 )
 
 type requestContext struct {
-	httpReq       atomic.Value // *http.Request
-	httpResp      atomic.Value // http.ResponseWrite
-	httpNext      atomic.Value // http.Handler
+	httpReq       *http.Request
+	httpResp      http.ResponseWriter
+	httpNext      http.Handler
 	responseProxy *contextResponse
 	requestProxy  *contextRequest
 	nativeFetch   goja.Value
@@ -45,6 +44,9 @@ func newRequestContext(vm *goja.Runtime) *requestContext {
 }
 
 func (ctx *requestContext) reset() {
+	ctx.httpReq = nil
+	ctx.httpResp = nil
+	ctx.httpNext = nil
 	ctx.hasFetch = false
 	ctx.nextInvoked = false
 	ctx.responseSent = false
@@ -91,9 +93,9 @@ func (ctx *requestContext) Keys() []string {
 }
 
 func (ctx *requestContext) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *requestContext {
-	ctx.httpResp.Store(w)
-	ctx.httpReq.Store(r)
-	ctx.httpNext.Store(next)
+	ctx.httpResp = w
+	ctx.httpReq = r
+	ctx.httpNext = next
 
 	return ctx
 }
@@ -111,10 +113,7 @@ func (ctx *requestContext) nativeNext(fc goja.FunctionCall) goja.Value {
 	ctx.nextInvoked = true
 	ctx.responseSent = true
 
-	req := ctx.httpReq.Load().(*http.Request)
-	resp := ctx.httpResp.Load().(http.ResponseWriter)
-	next := ctx.httpNext.Load().(http.Handler)
-	next.ServeHTTP(resp, req)
+	ctx.httpNext.ServeHTTP(ctx.httpResp, ctx.httpReq)
 	return goja.Undefined()
 }
 
@@ -123,13 +122,11 @@ func (ctx *requestContext) wait() {
 }
 
 func (ctx *requestContext) exception(err error) {
-	req := ctx.httpReq.Load().(*http.Request)
-	resp := ctx.httpResp.Load().(http.ResponseWriter)
 	select {
-	case <-req.Context().Done():
+	case <-ctx.httpReq.Context().Done():
 	default:
-		resp.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(resp, "Unexpected runtime exception: %+v", err)
+		ctx.httpResp.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(ctx.httpResp, "Unexpected runtime exception: %+v", err)
 	}
 	ctx.responseSent = true
 	ctx.done <- struct{}{}
@@ -164,13 +161,11 @@ func nativeContextWrapper(
 			ctx.done <- struct{}{}
 			return goja.Undefined()
 		}
-		req := ctx.httpReq.Load().(*http.Request)
-		resp := ctx.httpResp.Load().(http.ResponseWriter)
 		select {
-		case <-req.Context().Done():
+		case <-ctx.httpReq.Context().Done():
 		default:
 			v := fc.Argument(0)
-			fn(resp, req, v)
+			fn(ctx.httpResp, ctx.httpReq, v)
 		}
 		ctx.responseSent = true
 		ctx.done <- struct{}{}

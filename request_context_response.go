@@ -77,10 +77,10 @@ func (res *contextResponse) nativeGet(fc goja.FunctionCall) goja.Value {
 		panic(res.vm.NewTypeError("unexpected undefined to .get()"))
 	}
 
-	httpResp := res.httpResp.Load().(http.ResponseWriter)
+	w := res.httpResp
 
 	k := fmt.Sprintf("%s", field.Export())
-	v := httpResp.Header().Get(k)
+	v := w.Header().Get(k)
 
 	if v != "" {
 		return res.vm.ToValue(v)
@@ -109,10 +109,9 @@ func (res *contextResponse) nativeSet(fc goja.FunctionCall) goja.Value {
 			// TODO: add charset based on mime like express
 		}
 
-		httpResp := res.httpResp.Load().(http.ResponseWriter)
-
 		// TODO: handle slice of values
-		header := httpResp.Header()
+		w := res.httpResp
+		header := w.Header()
 		if header.Get(k) == "" {
 			header.Set(k, v)
 		} else {
@@ -174,8 +173,8 @@ func (res *contextResponse) nativeJson(fc goja.FunctionCall) goja.Value {
 		content []byte
 	)
 
-	httpResp := res.httpResp.Load().(http.ResponseWriter)
-	header := httpResp.Header()
+	w := res.httpResp
+	header := w.Header()
 	header.Set("content-type", "application/json")
 
 	if goja.IsUndefined(body) {
@@ -188,7 +187,7 @@ func (res *contextResponse) nativeJson(fc goja.FunctionCall) goja.Value {
 	}
 
 	res.sendHeaders()
-	httpResp.Write(content)
+	w.Write(content)
 
 	return goja.Undefined()
 }
@@ -208,8 +207,8 @@ func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
 		content []byte
 	)
 
-	httpResp := res.httpResp.Load().(http.ResponseWriter)
-	header := httpResp.Header()
+	w := res.httpResp
+	header := w.Header()
 
 	if goja.IsNull(body) {
 		return res.nativeJson(fc)
@@ -230,7 +229,7 @@ func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
 	}
 
 	res.sendHeaders()
-	httpResp.Write(content)
+	w.Write(content)
 
 	return goja.Undefined()
 }
@@ -241,8 +240,7 @@ func (res *contextResponse) nativeEnd(fc goja.FunctionCall) goja.Value {
 		panic(res.vm.NewTypeError("response already sent"))
 	}
 
-	httpResp := res.httpResp.Load().(http.ResponseWriter)
-
+	w := res.httpResp
 	res.sendHeaders()
 
 	body := fc.Argument(0)
@@ -254,18 +252,18 @@ func (res *contextResponse) nativeEnd(fc goja.FunctionCall) goja.Value {
 	case reflect.String:
 		var content []byte
 		res.vm.ExportTo(body, &content)
-		httpResp.Write(content)
+		w.Write(content)
 	}
 
 	return goja.Undefined()
 }
 
 func (res *contextResponse) sendHeaders() {
-	httpResp := res.httpResp.Load().(http.ResponseWriter)
+	w := res.httpResp
 	if res.statusSet {
-		httpResp.WriteHeader(res.statusCode)
+		w.WriteHeader(res.statusCode)
 	} else {
-		httpResp.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusOK)
 		res.statusSet = true
 	}
 	res.responseSent = true

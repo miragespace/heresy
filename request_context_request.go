@@ -3,7 +3,6 @@ package heresy
 import (
 	"fmt"
 	"net"
-	"net/http"
 
 	"github.com/dop251/goja"
 )
@@ -26,24 +25,24 @@ func newContextRequest(ctx *requestContext) *contextRequest {
 }
 
 func (req *contextRequest) Get(key string) goja.Value {
-	httpReq := req.httpReq.Load().(*http.Request)
+	r := req.httpReq
 
 	switch key {
 	case "ip":
-		ip, _, _ := net.SplitHostPort(httpReq.RemoteAddr)
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 		return req.vm.ToValue(ip)
 	case "method":
-		return req.vm.ToValue(httpReq.Method)
+		return req.vm.ToValue(r.Method)
 	case "path":
-		return req.vm.ToValue(httpReq.URL.Path)
+		return req.vm.ToValue(r.URL.Path)
 	case "protocol":
-		if httpReq.TLS == nil {
+		if r.TLS == nil {
 			return req.vm.ToValue("http")
 		} else {
 			return req.vm.ToValue("https")
 		}
 	case "secure":
-		if httpReq.TLS == nil {
+		if r.TLS == nil {
 			return req.vm.ToValue(false)
 		} else {
 			return req.vm.ToValue(true)
@@ -82,10 +81,8 @@ func (req *contextRequest) nativeGet(fc goja.FunctionCall) goja.Value {
 		panic(req.vm.NewTypeError("unexpected undefined to .get()"))
 	}
 
-	httpReq := req.httpReq.Load().(*http.Request)
-
 	k := fmt.Sprintf("%s", field.Export())
-	v := httpReq.Header.Get(k)
+	v := req.httpReq.Header.Get(k)
 
 	if v != "" {
 		return req.vm.ToValue(v)

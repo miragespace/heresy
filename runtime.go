@@ -137,7 +137,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 
 		_, err = vm.RunProgram(prog)
 		if err != nil {
-			setup <- fmt.Errorf("error setting up request script: %w", err)
+			setup <- fmt.Errorf("error setting up handler script: %w", err)
 			return
 		}
 
