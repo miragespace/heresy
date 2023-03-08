@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	ErrRuntimeNotReady = fmt.Errorf("runtime is not ready")
-	ErrNoHandler       = fmt.Errorf("script has no http handler configured")
+	ErrRuntimeNotReady = fmt.Errorf("middleware runtime is not ready")
+	ErrNoHandler       = fmt.Errorf("middleware script has no http handler configured")
 )
 
 func (rt *Runtime) Middleware(next http.Handler) http.Handler {

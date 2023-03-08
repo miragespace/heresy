@@ -1,8 +1,12 @@
 "use strict";
 
 function httpHandler(ctx) {
-	const { next } = ctx
-    next()
+	const { req, res, next } = ctx
+    if (req.path === "/") {
+        next()
+    } else {
+        res.status(403).send({error: 'access denied'})
+    }
 }
 
 registerMiddlewareHandler(httpHandler)

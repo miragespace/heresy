@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"strings"
+	"time"
 
 	"go.miragespace.co/heresy"
 
+	"github.com/clarkmcc/go-typescript"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
@@ -75,14 +79,28 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 			return
 		}
 
-		script, err := io.ReadAll(p)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "Failed to read script from body: %v", err)
-			return
+		var script string
+		if strings.HasSuffix(p.FileName(), ".ts") {
+			// transpile typescript
+			tCtx, tCancel := context.WithTimeout(r.Context(), time.Second*5)
+			defer tCancel()
+			script, err = typescript.TranspileCtx(tCtx, p)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Failed to transpile TypeScript: %v", err)
+				return
+			}
+		} else {
+			scriptBytes, err := io.ReadAll(p)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Failed to read script from body: %v", err)
+				return
+			}
+			script = string(scriptBytes)
 		}
 
-		err = rt.LoadScript(p.FileName(), string(script))
+		err = rt.LoadScript(p.FileName(), script)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Error reloading script: %v", err)
