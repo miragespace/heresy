@@ -32,7 +32,14 @@ func main() {
 	router := chi.NewRouter()
 	router.Mount("/debug", middleware.Profiler())
 	router.Mount("/reload", http.HandlerFunc(reloadScript(logger, rt)))
-	router.Handle("/*", http.HandlerFunc(rt.Handler))
+
+	index := chi.NewRouter()
+	index.Use(rt.Middleware)
+	index.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "index")
+	}))
+
+	router.Handle("/*", index)
 
 	addr := ":8081"
 	if len(args) > 1 {

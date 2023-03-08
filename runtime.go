@@ -2,10 +2,8 @@ package heresy
 
 import (
 	"fmt"
-	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
@@ -24,13 +22,18 @@ type Runtime struct {
 }
 
 type runtimeInstance struct {
-	httpHandler     atomic.Value // goja.Value
-	runtimeResolver goja.Callable
-	eventLoop       *eventloop.EventLoop
-	nativePool      *nativeResolverPool
+	middlewareHandler atomic.Value                         // goja.Value
+	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
+	runtimeResolver   goja.Callable
+	eventLoop         *eventloop.EventLoop
+	contextPool       *requestContextPool
 }
 
 func NewRuntime(logger *zap.Logger) (*Runtime, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger cannot be nil")
+	}
+
 	rt := &Runtime{
 		logger:    logger,
 		registry:  require.NewRegistry(),
@@ -74,6 +77,9 @@ func (rt *Runtime) LoadScript(scriptName, script string) error {
 		eventLoop: eventLoop,
 	}
 
+	var options nativeHandlerOptions
+	instance.handlerOption.Store(&options)
+
 	err = <-rt.setupRuntime(prog, instance)
 	if err != nil {
 		eventLoop.StopNoWait()
@@ -98,14 +104,6 @@ func (rt *Runtime) Stop() {
 func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan error {
 	setup := make(chan error, 1)
 
-	fetch := &fetchConfig{
-		eventLoop: inst.eventLoop,
-		scheduler: rt.scheduler,
-		client: &http.Client{
-			Timeout: time.Second * 15,
-		},
-	}
-
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		var err error
 		_, err = vm.RunProgram(nativePromiseResolverProg)
@@ -122,13 +120,20 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 		}
 		inst.runtimeResolver = resolver
 
-		vm.Set("registerRequestHandler", func(fn goja.Value) {
+		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
+
+		vm.Set("registerMiddlewareHandler", func(fn, opt goja.Value) {
 			if _, ok := goja.AssertFunction(fn); ok {
-				inst.httpHandler.Store(fn)
+				inst.middlewareHandler.Store(fn)
+			}
+			if opt == nil {
+				return
+			}
+			var options nativeHandlerOptions
+			if err := vm.ExportTo(opt, &options); err == nil {
+				inst.handlerOption.Store(&options)
 			}
 		})
-
-		fetch.Enable(vm)
 
 		_, err = vm.RunProgram(prog)
 		if err != nil {
@@ -136,7 +141,8 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 			return
 		}
 
-		inst.nativePool = newResolverPool(vm)
+		inst.contextPool = newRequestContextPool(inst)
+
 		setup <- nil
 	})
 	return setup

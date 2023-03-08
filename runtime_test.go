@@ -1,11 +1,13 @@
 package heresy
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -45,7 +47,13 @@ func TestEmptyRuntime(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://test/", nil)
 	w := httptest.NewRecorder()
 
-	rt.Handler(w, req)
+	router := chi.NewRouter()
+	router.Use(rt.Middleware)
+	router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+
+	router.ServeHTTP(w, req)
 
 	as.Equal(http.StatusServiceUnavailable, w.Result().StatusCode)
 }
@@ -64,7 +72,13 @@ func TestRuntimeNoHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://test/", nil)
 	w := httptest.NewRecorder()
 
-	rt.Handler(w, req)
+	router := chi.NewRouter()
+	router.Use(rt.Middleware)
+	router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+
+	router.ServeHTTP(w, req)
 
 	as.Equal(http.StatusBadGateway, w.Result().StatusCode)
 }
@@ -80,10 +94,16 @@ func TestRuntimeScriptReload(t *testing.T) {
 	err = rt.LoadScript("promise.js", testScriptPromise)
 	as.NoError(err)
 
+	router := chi.NewRouter()
+	router.Use(rt.Middleware)
+	router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+
 	req := httptest.NewRequest(http.MethodGet, "http://test/", nil)
 	w := httptest.NewRecorder()
 
-	rt.Handler(w, req)
+	router.ServeHTTP(w, req)
 
 	as.Equal(http.StatusOK, w.Result().StatusCode)
 	body, err := io.ReadAll(w.Result().Body)
@@ -96,7 +116,7 @@ func TestRuntimeScriptReload(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "http://test/", nil)
 	w = httptest.NewRecorder()
 
-	rt.Handler(w, req)
+	router.ServeHTTP(w, req)
 
 	as.Equal(http.StatusOK, w.Result().StatusCode)
 	body, err = io.ReadAll(w.Result().Body)

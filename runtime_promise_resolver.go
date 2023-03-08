@@ -3,8 +3,8 @@ package heresy
 import "github.com/dop251/goja"
 
 const nativePromiseResolverScript = `
-const __runtimeResolver = (handler, req, resolve, reject) => {
-    Promise.resolve(handler(req)).then(resolve).catch(reject)
+const __runtimeResolver = (handler, ctx, resolve, reject) => {
+    Promise.resolve(handler(ctx)).then(resolve).catch(reject)
 }
 `
 

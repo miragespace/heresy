@@ -1,6 +1,7 @@
 package heresy
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 )
 
 type fetchConfig struct {
+	context   context.Context
 	eventLoop *eventloop.EventLoop
 	scheduler *pond.WorkerPool
 	client    *http.Client
@@ -63,7 +65,7 @@ func (f *fetchConfig) nativeFetch(fc goja.FunctionCall, vm *goja.Runtime) goja.V
 	v := req.ExportType()
 	switch v.Kind() {
 	case reflect.String:
-		r, err = http.NewRequest("GET", req.String(), nil)
+		r, err = http.NewRequestWithContext(f.context, http.MethodGet, req.String(), nil)
 	default:
 		err = fmt.Errorf("not implemented")
 	}
@@ -72,9 +74,6 @@ func (f *fetchConfig) nativeFetch(fc goja.FunctionCall, vm *goja.Runtime) goja.V
 	} else {
 		f.runtimeWrapper(vm, r, resolve, reject)
 	}
-	return val
-}
 
-func (f *fetchConfig) Enable(vm *goja.Runtime) {
-	vm.Set("fetch", f.nativeFetch)
+	return val
 }
