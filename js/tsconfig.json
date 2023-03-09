@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "target": "ES6",
+        "lib": [
+            "ES6",
+            "DOM",
+            "DOM.Iterable",
+            "ES2015.Iterable",
+            "ES2017.Object"
+        ],
+        "module": "ES2015",
+        "declaration": true,
+        "declarationMap": true,
+        "stripInternal": true,
+        "strict": true,
+        "skipDefaultLibCheck": true,
+        "moduleResolution": "node",
+        "baseUrl": "."
+    }
+}

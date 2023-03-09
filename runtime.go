@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.miragespace.co/heresy/modules"
+
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/console"
@@ -38,7 +40,7 @@ func NewRuntime(logger *zap.Logger) (*Runtime, error) {
 
 	rt := &Runtime{
 		logger:    logger,
-		registry:  require.NewRegistry(require.WithLoader(modulesFS.ReadFile)),
+		registry:  require.NewRegistryWithLoader(modules.ModulesFS.ReadFile),
 		scheduler: pond.New(10, 100),
 	}
 
@@ -115,7 +117,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setu
 		return
 	}
 
-	modulesProp, err := loadModulesExporter()
+	modulesProp, err := modules.LoadModulesExporter()
 	if err != nil {
 		setup <- err
 		return

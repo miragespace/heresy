@@ -9,13 +9,10 @@ import (
 type requestContextPool struct {
 	ctxPool sync.Pool
 	chPool  sync.Pool
-	inst    *runtimeInstance
 }
 
 func newRequestContextPool(inst *runtimeInstance) *requestContextPool {
-	pool := &requestContextPool{
-		inst: inst,
-	}
+	pool := &requestContextPool{}
 	pool.chPool = sync.Pool{
 		New: func() any {
 			return make(chan *requestContext, 1)

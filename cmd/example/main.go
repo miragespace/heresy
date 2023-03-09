@@ -8,6 +8,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -52,7 +53,23 @@ func main() {
 
 	logger.Info("ready", zap.String("addr", addr))
 
-	http.ListenAndServe(addr, router)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
+
+	defer srv.Shutdown(context.Background())
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+
+	logger.Info("received signal to stop", zap.String("signal", (<-sig).String()))
 }
 
 func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWriter, r *http.Request) {
