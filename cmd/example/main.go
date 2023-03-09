@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"go.miragespace.co/heresy"
+	"go.miragespace.co/heresy/transpile"
 
-	"github.com/clarkmcc/go-typescript"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
@@ -84,7 +84,7 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 			// transpile typescript
 			tCtx, tCancel := context.WithTimeout(r.Context(), time.Second*5)
 			defer tCancel()
-			script, err = typescript.TranspileCtx(tCtx, p)
+			script, err = transpile.TranspileTypescript(tCtx, p)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, "Failed to transpile TypeScript: %v", err)

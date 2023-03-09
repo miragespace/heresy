@@ -2,6 +2,7 @@ package heresy
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/dop251/goja_nodejs/console"
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/dop251/goja_nodejs/require"
+	"github.com/dop251/goja_nodejs/url"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +38,7 @@ func NewRuntime(logger *zap.Logger) (*Runtime, error) {
 
 	rt := &Runtime{
 		logger:    logger,
-		registry:  require.NewRegistry(),
+		registry:  require.NewRegistry(require.WithLoader(modulesFS.ReadFile)),
 		scheduler: pond.New(10, 100),
 	}
 
@@ -86,6 +88,9 @@ func (rt *Runtime) LoadScript(scriptName, script string) error {
 		return err
 	}
 
+	// force GC on script reload
+	runtime.GC()
+
 	rt.instance = instance
 	return nil
 }
@@ -101,26 +106,47 @@ func (rt *Runtime) Stop() {
 	rt.scheduler.Stop()
 }
 
-func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan error {
-	setup := make(chan error, 1)
+func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setup chan error) {
+	setup = make(chan error, 1)
+
+	resolverProg, err := loadNativePromiseResolver()
+	if err != nil {
+		setup <- err
+		return
+	}
+
+	modulesProp, err := loadModulesExporter()
+	if err != nil {
+		setup <- err
+		return
+	}
 
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		url.Enable(vm)
+
+		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
+
 		var err error
-		_, err = vm.RunProgram(nativePromiseResolverProg)
+
+		_, err = vm.RunProgram(resolverProg)
 		if err != nil {
 			setup <- fmt.Errorf("internal error: failed to setting up runtime resolver: %w", err)
 			return
 		}
 
-		runtimeResolver := vm.Get("__runtimeResolver")
+		_, err = vm.RunProgram(modulesProp)
+		if err != nil {
+			setup <- fmt.Errorf("internal error: failed to setting up runtime modules: %w", err)
+			return
+		}
+
+		runtimeResolver := vm.Get(nativePromiseResolverSymbol)
 		resolver, ok := goja.AssertFunction(runtimeResolver)
 		if !ok {
-			setup <- fmt.Errorf("internal error: __runtimeResolver is not a function")
+			setup <- fmt.Errorf("internal error: %s is not a function", nativePromiseResolverSymbol)
 			return
 		}
 		inst.runtimeResolver = resolver
-
-		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
 
 		vm.Set("registerMiddlewareHandler", func(fn, opt goja.Value) {
 			if _, ok := goja.AssertFunction(fn); ok {
@@ -145,5 +171,6 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) chan 
 
 		setup <- nil
 	})
-	return setup
+
+	return
 }
