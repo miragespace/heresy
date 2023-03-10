@@ -4,22 +4,27 @@ import (
 	"embed"
 
 	"github.com/dop251/goja"
+	"github.com/dop251/goja_nodejs/eventloop"
 )
 
 //go:embed node_modules/*
 var ModulesFS embed.FS
 
-const modulesExporterScript = `
-// polyfill URLSearchParams
-require('url-search-params-polyfill/index.js')
+//go:embed modules.js
+var modulesExporterScript string
 
-// polyfill Streams API
-require('web-streams/polyfill.es6.min.js');
+var modulesExporterProg = goja.MustCompile("modulesExporter", modulesExporterScript, true)
 
-// polyfill Fetch API
-require('fetch/polyfill.es6.min.js')
-`
+func InjectModules(eventLoop *eventloop.EventLoop) error {
+	setup := make(chan error, 1)
+	eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		_, err := vm.RunProgram(modulesExporterProg)
+		if err != nil {
+			setup <- err
+			return
+		}
+		setup <- nil
+	})
 
-func LoadModulesExporter() (*goja.Program, error) {
-	return goja.Compile("modules", modulesExporterScript, true)
+	return <-setup
 }

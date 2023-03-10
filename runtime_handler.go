@@ -52,18 +52,15 @@ func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 			ctx.WithFetch(fetch)
 		}
 
-		instance.eventLoop.RunOnLoop(func(*goja.Runtime) {
-			if _, err := instance.runtimeResolver(
-				goja.Undefined(),
-				middlewareHandler,
-				ctx.nativeCtx,
-				ctx.nativeResolve,
-				ctx.nativeReject,
-			); err != nil {
-				rt.logger.Error("Unexpected runtime exception", zap.Error(err))
-				ctx.exception(err)
-			}
-		})
+		if err := instance.resolver.NewPromise(
+			middlewareHandler,
+			ctx.nativeCtx,
+			ctx.nativeResolve,
+			ctx.nativeReject,
+		); err != nil {
+			rt.logger.Error("Unexpected runtime exception", zap.Error(err))
+			ctx.exception(err)
+		}
 
 		ctx.wait()
 	})

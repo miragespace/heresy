@@ -37,6 +37,9 @@ func main() {
 	router := chi.NewRouter()
 	router.Mount("/debug", middleware.Profiler())
 	router.Mount("/reload", http.HandlerFunc(reloadScript(logger, rt)))
+	router.Mount("/test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rt.TestStream()
+	}))
 
 	index := chi.NewRouter()
 	index.Use(rt.Middleware)

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.miragespace.co/heresy/extensions/promise"
+	"go.miragespace.co/heresy/extensions/stream"
 	"go.miragespace.co/heresy/modules"
 
 	"github.com/alitto/pond"
@@ -28,9 +30,11 @@ type Runtime struct {
 type runtimeInstance struct {
 	middlewareHandler atomic.Value                         // goja.Value
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
-	runtimeResolver   goja.Callable
-	eventLoop         *eventloop.EventLoop
 	contextPool       *requestContextPool
+	eventLoop         *eventloop.EventLoop
+	resolver          *promise.PromiseResolver
+	stream            *stream.StreamController
+	vm                *goja.Runtime
 }
 
 func NewRuntime(logger *zap.Logger) (*Runtime, error) {
@@ -47,18 +51,18 @@ func NewRuntime(logger *zap.Logger) (*Runtime, error) {
 	return rt, nil
 }
 
-func (rt *Runtime) LoadScript(scriptName, script string) error {
-	prog, err := goja.Compile(scriptName, script, true)
+func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
+	var (
+		prog *goja.Program
+	)
+
+	prog, err = goja.Compile(scriptName, script, true)
 	if err != nil {
 		return fmt.Errorf("error compiling script: %w", err)
 	}
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-
-	if rt.instance != nil {
-		rt.instance.eventLoop.StopNoWait()
-	}
 
 	useZapLogger := rt.logger != nil
 
@@ -77,8 +81,29 @@ func (rt *Runtime) LoadScript(scriptName, script string) error {
 		})
 	}
 
+	defer func() {
+		if err != nil {
+			eventLoop.StopNoWait()
+		}
+	}()
+
 	instance := &runtimeInstance{
 		eventLoop: eventLoop,
+	}
+
+	err = modules.InjectModules(eventLoop)
+	if err != nil {
+		return
+	}
+
+	instance.resolver, err = promise.NewResolver(eventLoop)
+	if err != nil {
+		return
+	}
+
+	instance.stream, err = stream.NewController(eventLoop)
+	if err != nil {
+		return
 	}
 
 	var options nativeHandlerOptions
@@ -86,8 +111,11 @@ func (rt *Runtime) LoadScript(scriptName, script string) error {
 
 	err = <-rt.setupRuntime(prog, instance)
 	if err != nil {
-		eventLoop.StopNoWait()
-		return err
+		return
+	}
+
+	if rt.instance != nil {
+		rt.instance.eventLoop.StopNoWait()
 	}
 
 	// force GC on script reload
@@ -111,45 +139,9 @@ func (rt *Runtime) Stop() {
 func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setup chan error) {
 	setup = make(chan error, 1)
 
-	resolverProg, err := loadNativePromiseResolver()
-	if err != nil {
-		setup <- err
-		return
-	}
-
-	modulesProp, err := modules.LoadModulesExporter()
-	if err != nil {
-		setup <- err
-		return
-	}
-
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		url.Enable(vm)
-
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-
-		var err error
-
-		_, err = vm.RunProgram(resolverProg)
-		if err != nil {
-			setup <- fmt.Errorf("internal error: failed to setting up runtime resolver: %w", err)
-			return
-		}
-
-		_, err = vm.RunProgram(modulesProp)
-		if err != nil {
-			setup <- fmt.Errorf("internal error: failed to setting up runtime modules: %w", err)
-			return
-		}
-
-		runtimeResolver := vm.Get(nativePromiseResolverSymbol)
-		resolver, ok := goja.AssertFunction(runtimeResolver)
-		if !ok {
-			setup <- fmt.Errorf("internal error: %s is not a function", nativePromiseResolverSymbol)
-			return
-		}
-		inst.runtimeResolver = resolver
-
 		vm.Set("registerMiddlewareHandler", func(fn, opt goja.Value) {
 			if _, ok := goja.AssertFunction(fn); ok {
 				inst.middlewareHandler.Store(fn)
@@ -163,6 +155,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setu
 			}
 		})
 
+		var err error
 		_, err = vm.RunProgram(prog)
 		if err != nil {
 			setup <- fmt.Errorf("error setting up handler script: %w", err)
@@ -170,6 +163,7 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setu
 		}
 
 		inst.contextPool = newRequestContextPool(inst)
+		inst.vm = vm
 
 		setup <- nil
 	})
