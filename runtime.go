@@ -142,17 +142,23 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setu
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		url.Enable(vm)
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-		vm.Set("registerMiddlewareHandler", func(fn, opt goja.Value) {
+		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
+			ret = goja.Undefined()
+
+			fn := fc.Argument(0)
 			if _, ok := goja.AssertFunction(fn); ok {
 				inst.middlewareHandler.Store(fn)
 			}
-			if opt == nil {
+
+			opt := fc.Argument(1)
+			if goja.IsUndefined(opt) {
 				return
 			}
 			var options nativeHandlerOptions
 			if err := vm.ExportTo(opt, &options); err == nil {
 				inst.handlerOption.Store(&options)
 			}
+			return
 		})
 
 		var err error

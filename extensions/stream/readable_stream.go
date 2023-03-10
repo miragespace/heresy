@@ -20,48 +20,23 @@ func (s *nativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 	ret = vm.ToValue(promise)
 
 	var (
-		err        error
-		buffer     goja.ArrayBuffer
-		offset     int
-		length     int
-		viewBuffer = fc.Argument(0)
-		byteOffset = fc.Argument(1)
-		byteLength = fc.Argument(2)
+		viewBuffer                  = fc.Argument(0)
+		byteOffset                  = fc.Argument(1)
+		byteLength                  = fc.Argument(2)
+		buffer     goja.ArrayBuffer = viewBuffer.Export().(goja.ArrayBuffer)
+		offset     int64            = byteOffset.ToInteger()
+		length     int64            = byteLength.ToInteger()
 	)
-
-	err = vm.ExportTo(viewBuffer, &buffer)
-	if err != nil {
-		s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-			reject(err)
-		})
-		return
-	}
-
-	err = vm.ExportTo(byteOffset, &offset)
-	if err != nil {
-		s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-			reject(err)
-		})
-		return
-	}
-
-	err = vm.ExportTo(byteLength, &length)
-	if err != nil {
-		s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-			reject(err)
-		})
-		return
-	}
 
 	buf := buffer.Bytes()[offset:length]
 	go func() {
 		n, err := s.reader.Read(buf)
 		if err != nil && !errors.Is(err, io.EOF) {
-			s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+			s.eventLoop.RunOnLoop(func(*goja.Runtime) {
 				reject(err)
 			})
 		} else {
-			s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+			s.eventLoop.RunOnLoop(func(*goja.Runtime) {
 				resolve(n)
 			})
 		}
