@@ -8,7 +8,7 @@ import (
 
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
-	"go.miragespace.co/heresy/modules"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
@@ -44,7 +44,7 @@ func NewRuntime(logger *zap.Logger) (*Runtime, error) {
 
 	rt := &Runtime{
 		logger:    logger,
-		registry:  require.NewRegistryWithLoader(modules.ModulesFS.ReadFile),
+		registry:  require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile),
 		scheduler: pond.New(10, 100),
 	}
 
@@ -91,7 +91,7 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 		eventLoop: eventLoop,
 	}
 
-	err = modules.InjectModules(eventLoop)
+	err = polyfill.PolyfillRuntime(eventLoop)
 	if err != nil {
 		return
 	}
