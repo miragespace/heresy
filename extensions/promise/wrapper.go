@@ -13,4 +13,4 @@ const (
 //go:embed wrapper.js
 var promiseResolverScript string
 
-var promiseResolverProg = goja.MustCompile("promiseResolver", promiseResolverScript, true)
+var promiseResolverProg = goja.MustCompile("promiseResolver", promiseResolverScript, false)

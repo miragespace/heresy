@@ -40,7 +40,7 @@ func TestEmptyRuntime(t *testing.T) {
 	as := require.New(t)
 	logger := zaptest.NewLogger(t)
 
-	rt, err := NewRuntime(logger)
+	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
 	defer rt.Stop()
 
@@ -62,7 +62,7 @@ func TestRuntimeNoHandler(t *testing.T) {
 	as := require.New(t)
 	logger := zaptest.NewLogger(t)
 
-	rt, err := NewRuntime(logger)
+	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
 	defer rt.Stop()
 
@@ -87,7 +87,7 @@ func TestRuntimeScriptReload(t *testing.T) {
 	as := require.New(t)
 	logger := zaptest.NewLogger(t)
 
-	rt, err := NewRuntime(logger)
+	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
 	defer rt.Stop()
 

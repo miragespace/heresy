@@ -3,17 +3,22 @@ package stream
 import (
 	"fmt"
 	"io"
+	"sync"
 
+	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
+const BufferSize = 8 * 1024
+
 type StreamController struct {
 	eventLoop      *eventloop.EventLoop
 	runtimeWrapper goja.Callable
+	nativeObjPool  sync.Pool
 }
 
-func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
+func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (*StreamController, error) {
 	t := &StreamController{
 		eventLoop: eventLoop,
 	}
@@ -34,6 +39,19 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 		}
 		t.runtimeWrapper = wrapper
 
+		t.nativeObjPool = sync.Pool{
+			New: func() any {
+				w := &nativeReaderWrapper{
+					eventLoop: eventLoop,
+					scheduler: scheduler,
+				}
+				w._readInto = vm.ToValue(w.ReadInto)
+				w._size = vm.ToValue(BufferSize)
+				w._close = vm.ToValue(t.closeReader)
+				return vm.NewDynamicObject(w)
+			},
+		}
+
 		setup <- nil
 	})
 
@@ -43,6 +61,17 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 	}
 
 	return t, nil
+}
+
+func (s *StreamController) closeReader(fc goja.FunctionCall) goja.Value {
+	obj := fc.Argument(0).(*goja.Object)
+	w := obj.Export().(*nativeReaderWrapper)
+	if w.reader != nil {
+		w.reader.Close()
+		w.reader = nil
+		s.nativeObjPool.Put(obj)
+	}
+	return goja.Undefined()
 }
 
 func (s *StreamController) NewReadableStream(r io.ReadCloser) (goja.Value, error) {
@@ -66,10 +95,9 @@ func (s *StreamController) NewReadableStream(r io.ReadCloser) (goja.Value, error
 }
 
 func (s *StreamController) NewReadableStreamVM(r io.ReadCloser, vm *goja.Runtime) (goja.Value, error) {
-	w := &nativeReaderWrapper{
-		reader:    r,
-		eventLoop: s.eventLoop,
-	}
+	obj := s.nativeObjPool.Get().(*goja.Object)
+	w := obj.Export().(*nativeReaderWrapper)
+	w.reader = r
 
-	return s.runtimeWrapper(goja.Undefined(), vm.ToValue(w))
+	return s.runtimeWrapper(goja.Undefined(), obj)
 }

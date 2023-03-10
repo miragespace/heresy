@@ -21,10 +21,15 @@ import (
 
 type Runtime struct {
 	logger    *zap.Logger
-	registry  *require.Registry
 	scheduler *pond.WorkerPool
-	mu        sync.RWMutex
-	instance  *runtimeInstance
+	shards    []*instanceShard
+	nextShard uint32
+	numShards int
+}
+
+type instanceShard struct {
+	mu       sync.RWMutex
+	instance *runtimeInstance
 }
 
 type runtimeInstance struct {
@@ -35,22 +40,37 @@ type runtimeInstance struct {
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
 	vm                *goja.Runtime
+
+	_testDrainStream goja.Value
 }
 
-func NewRuntime(logger *zap.Logger) (*Runtime, error) {
+// NewRuntime returns a new heresy runtime. Use shards > 1 to enable round-robin
+// incoming requests to multiple JavaScript runtimes. Recommend not exceeding 4.
+func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 	if logger == nil {
 		return nil, fmt.Errorf("logger cannot be nil")
 	}
 
+	if shards < 1 {
+		return nil, fmt.Errorf("shards cannot be smaller than 1")
+	}
+
 	rt := &Runtime{
 		logger:    logger,
-		registry:  require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile),
-		scheduler: pond.New(10, 100),
+		scheduler: pond.New(100, 200),
+		shards:    make([]*instanceShard, shards),
+		numShards: shards,
+	}
+
+	for i := range rt.shards {
+		rt.shards[i] = &instanceShard{}
 	}
 
 	return rt, nil
 }
 
+// LoadScript reload the script handling incoming request on-the-fly. Script
+// will be executed in a fresh runtime.
 func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 	var (
 		prog *goja.Program
@@ -61,25 +81,56 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 		return fmt.Errorf("error compiling script: %w", err)
 	}
 
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	// force GC on script reload
+	defer runtime.GC()
 
-	useZapLogger := rt.logger != nil
+	for _, shard := range rt.shards {
+		shard.mu.Lock()
 
-	eventLoop := eventloop.NewEventLoop(
-		eventloop.EnableConsole(!useZapLogger),
-		eventloop.WithRegistry(rt.registry),
-	)
-	eventLoop.Start()
+		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
-	if useZapLogger {
 		runtimeLogger := newRuntimeLogger(scriptName, rt.logger)
 		loggerModule := console.RequireWithPrinter(runtimeLogger)
-		rt.registry.RegisterNativeModule(loggerModuleName, loggerModule)
-		eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-			vm.Set("console", require.Require(vm, loggerModuleName))
-		})
+		registry.RegisterNativeModule(loggerModuleName, loggerModule)
+
+		instance, err := rt.getInstance(registry)
+		if err != nil {
+			shard.mu.Unlock()
+			return err
+		}
+
+		err = <-instance.loadProgram(prog)
+		if err != nil {
+			return err
+		}
+
+		if shard.instance != nil {
+			shard.instance.eventLoop.StopNoWait()
+		}
+		shard.instance = instance
+
+		shard.mu.Unlock()
 	}
+
+	return nil
+}
+
+func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
+	n := atomic.AddUint32(&rt.nextShard, 1)
+	shard := rt.shards[(int(n)-1)%rt.numShards]
+
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	fn(shard.instance)
+}
+
+func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeInstance, err error) {
+	eventLoop := eventloop.NewEventLoop(
+		eventloop.EnableConsole(false),
+		eventloop.WithRegistry(registry),
+	)
+	eventLoop.Start()
 
 	defer func() {
 		if err != nil {
@@ -87,7 +138,7 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 		}
 	}()
 
-	instance := &runtimeInstance{
+	instance = &runtimeInstance{
 		eventLoop: eventLoop,
 	}
 
@@ -101,7 +152,7 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 		return
 	}
 
-	instance.stream, err = stream.NewController(eventLoop)
+	instance.stream, err = stream.NewController(eventLoop, rt.scheduler)
 	if err != nil {
 		return
 	}
@@ -109,39 +160,30 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 	var options nativeHandlerOptions
 	instance.handlerOption.Store(&options)
 
-	err = <-rt.setupRuntime(prog, instance)
-	if err != nil {
-		return
-	}
+	err = <-instance.prepareInstance()
 
-	if rt.instance != nil {
-		rt.instance.eventLoop.StopNoWait()
-	}
-
-	// force GC on script reload
-	runtime.GC()
-
-	rt.instance = instance
-	return nil
+	return
 }
 
 func (rt *Runtime) Stop() {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-
-	if rt.instance != nil {
-		rt.instance.eventLoop.StopNoWait()
-		rt.instance = nil
+	for _, shard := range rt.shards {
+		shard.mu.Lock()
+		if shard.instance != nil {
+			shard.instance.eventLoop.StopNoWait()
+			shard.instance = nil
+		}
+		shard.mu.Unlock()
 	}
 	rt.scheduler.Stop()
 }
 
-func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setup chan error) {
+func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 	setup = make(chan error, 1)
 
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		url.Enable(vm)
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
+		vm.Set("console", require.Require(vm, loggerModuleName))
 		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 
@@ -161,15 +203,26 @@ func (rt *Runtime) setupRuntime(prog *goja.Program, inst *runtimeInstance) (setu
 			return
 		})
 
-		var err error
-		_, err = vm.RunProgram(prog)
+		inst.contextPool = newRequestContextPool(inst)
+		inst.vm = vm
+
+		setup <- nil
+	})
+
+	return
+}
+
+func (inst *runtimeInstance) loadProgram(prog *goja.Program) (setup chan error) {
+	setup = make(chan error, 1)
+
+	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		_, err := vm.RunProgram(prog)
 		if err != nil {
 			setup <- fmt.Errorf("error setting up handler script: %w", err)
 			return
 		}
 
-		inst.contextPool = newRequestContextPool(inst)
-		inst.vm = vm
+		inst._testDrainStream = vm.Get("drainStream")
 
 		setup <- nil
 	})

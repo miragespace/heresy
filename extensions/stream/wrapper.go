@@ -13,4 +13,4 @@ const (
 //go:embed wrapper.js
 var streamWrapperScript string
 
-var streamWrapperProg = goja.MustCompile("streamWrapper", streamWrapperScript, true)
+var streamWrapperProg = goja.MustCompile("streamWrapper", streamWrapperScript, false)

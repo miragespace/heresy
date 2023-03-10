@@ -1,0 +1,30 @@
+{
+    "compilerOptions": {
+        "target": "ES2017",
+        "lib": [
+            "ES6",
+            "DOM",
+            "DOM.Iterable",
+            "ES2015.Promise",
+            "ES2015.Iterable",
+            "ES2016.Array.Include",
+            "ES2017.Object"
+        ],
+        "sourceMap": false,
+        "module": "ES2015",
+        "allowSyntheticDefaultImports": true,
+        "declaration": false,
+        "declarationMap": false,
+        "stripInternal": true,
+        "strict": true,
+        "skipDefaultLibCheck": true,
+        "skipLibCheck": true,
+        "moduleResolution": "node",
+        "baseUrl": ".",
+    },
+    "include": [
+        "./fetch/*.ts",
+        "./promise/*.ts",
+        "./stream/*.ts",
+    ]
+}
