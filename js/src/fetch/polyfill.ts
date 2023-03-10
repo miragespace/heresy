@@ -1,10 +1,11 @@
-import Headers from "./headers";
+// @ts-ignore
+import { Headers, Request, Response } from "./types.js";
 import { globals } from "../utils";
-
-export { Headers };
 
 const m = {
   Headers,
+  Request,
+  Response,
 };
 
 // Add classes to global scope
