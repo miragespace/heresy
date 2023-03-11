@@ -65,10 +65,11 @@ func (req *fetchEventRequest) reset() {
 func (req *fetchEventRequest) Get(key string) goja.Value {
 	switch key {
 	case "url":
-		if req.httpReq.URL.RawQuery != "" {
-			return req.vm.ToValue(req.httpReq.URL.Path + "?" + req.httpReq.URL.RawQuery)
+		scheme := "http"
+		if req.httpReq.TLS == nil {
+			scheme = "https"
 		}
-		return req.vm.ToValue(req.httpReq.URL.Path)
+		return req.vm.ToValue(fmt.Sprintf("%s://%s%s", scheme, req.httpReq.Host, req.httpReq.URL.RequestURI()))
 	case "method":
 		return req.vm.ToValue(req.httpReq.Method)
 
