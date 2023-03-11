@@ -11,7 +11,8 @@ import (
 
 type contextResponse struct {
 	*requestContext
-	nativeRes *goja.Object
+	nativeRes  *goja.Object
+	statusCode int
 }
 
 var _ goja.DynamicObject = (*contextResponse)(nil)
@@ -20,6 +21,7 @@ func newContextResponse(ctx *requestContext) *contextResponse {
 	res := &contextResponse{
 		requestContext: ctx,
 	}
+	res.Reset()
 	res.nativeRes = ctx.vm.NewDynamicObject(res)
 	return res
 }
@@ -65,7 +67,7 @@ func (res *contextResponse) Keys() []string {
 	return []string{"headersSent"}
 }
 
-func (res *contextResponse) reset() {
+func (res *contextResponse) Reset() {
 	res.statusCode = http.StatusNoContent
 	res.statusSet = false
 }

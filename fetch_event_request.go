@@ -5,11 +5,12 @@ import (
 	"net/http"
 
 	"github.com/dop251/goja"
+	"go.miragespace.co/heresy/extensions/common"
 )
 
 type fetchEventRequest struct {
 	*fetchEvent
-	headersProxy          *fetchEventRequestHeaders
+	headersProxy          *common.HeadersProxy
 	nativeBody            goja.Value
 	nativeReq             *goja.Object
 	nativeRequestInstance *goja.Object
@@ -24,7 +25,7 @@ func newFetchEventRequest(evt *fetchEvent) *fetchEventRequest {
 		nativeBody:   goja.Null(),
 		bodyConsumed: false,
 	}
-	req.headersProxy = newFetchEventRequestHeaders(evt)
+	req.headersProxy = common.NewHeadersProxy(evt.vm)
 
 	requestClass := req.vm.Get("Request")
 	requestConstructor, ok := goja.AssertConstructor(requestClass)
@@ -54,10 +55,11 @@ func (req *fetchEventRequest) initialize() {
 		}
 		req.nativeBody = nativeBody
 	}
-
+	req.headersProxy.UseHeader(req.httpReq.Header)
 }
 
-func (req *fetchEventRequest) reset() {
+func (req *fetchEventRequest) Reset() {
+	req.headersProxy.UnsetHeader()
 	req.nativeBody = goja.Null()
 	req.bodyConsumed = false
 }
@@ -81,7 +83,7 @@ func (req *fetchEventRequest) Get(key string) goja.Value {
 		return req.nativeBody
 
 	case "headers":
-		return req.headersProxy.nativeHeaders
+		return req.headersProxy.NativeObject()
 
 	default:
 		return req.nativeRequestInstance.Get(key)

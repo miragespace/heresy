@@ -5,17 +5,18 @@ import (
 	"io"
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/common"
+
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
-const BufferSize = 8 * 1024
-
 type StreamController struct {
 	eventLoop      *eventloop.EventLoop
 	runtimeWrapper goja.Callable
 	nativeObjPool  sync.Pool
+	vm             *goja.Runtime
 }
 
 func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (*StreamController, error) {
@@ -38,17 +39,13 @@ func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (
 			return
 		}
 		t.runtimeWrapper = wrapper
+		t.vm = vm
 
 		t.nativeObjPool = sync.Pool{
 			New: func() any {
-				w := &nativeReaderWrapper{
-					eventLoop: eventLoop,
-					scheduler: scheduler,
-				}
-				w._readInto = vm.ToValue(w.ReadInto)
-				w._size = vm.ToValue(BufferSize)
-				w._close = vm.ToValue(t.closeReader)
-				return vm.NewDynamicObject(w)
+				w := common.NewNativeReaderWrapper(vm, eventLoop, scheduler)
+				w.OverwriteClose(vm.ToValue(t.closeReader))
+				return w
 			},
 		}
 
@@ -63,15 +60,22 @@ func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (
 	return t, nil
 }
 
+// called if .close() is called from JavaScript
 func (s *StreamController) closeReader(fc goja.FunctionCall) goja.Value {
-	obj := fc.Argument(0).(*goja.Object)
-	w := obj.Export().(*nativeReaderWrapper)
-	if w.reader != nil {
-		w.reader.Close()
-		w.reader = nil
-		s.nativeObjPool.Put(obj)
-	}
+	w := fc.Argument(0).Export().(*common.NativeReaderWrapper)
+	s.Close(w)
 	return goja.Undefined()
+}
+
+// called if external module took control of the io.Reader,
+// such as Fetcher
+func (s *StreamController) Close(w *common.NativeReaderWrapper) {
+	if !w.SameRuntime(s.vm) {
+		return
+	}
+	w.Close()
+	w.WithReader(nil)
+	s.nativeObjPool.Put(w)
 }
 
 func (s *StreamController) NewReadableStream(r io.ReadCloser) (goja.Value, error) {
@@ -95,9 +99,8 @@ func (s *StreamController) NewReadableStream(r io.ReadCloser) (goja.Value, error
 }
 
 func (s *StreamController) NewReadableStreamVM(r io.ReadCloser, vm *goja.Runtime) (goja.Value, error) {
-	obj := s.nativeObjPool.Get().(*goja.Object)
-	w := obj.Export().(*nativeReaderWrapper)
-	w.reader = r
+	w := s.nativeObjPool.Get().(*common.NativeReaderWrapper)
+	w.WithReader(r)
 
-	return s.runtimeWrapper(goja.Undefined(), obj)
+	return s.runtimeWrapper(goja.Undefined(), w.NativeObject())
 }

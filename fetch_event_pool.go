@@ -39,6 +39,6 @@ func (p *fetchEventPool) Get() *fetchEvent {
 }
 
 func (p *fetchEventPool) Put(evt *fetchEvent) {
-	evt.reset()
+	evt.Reset()
 	p.evtPool.Put(evt)
 }

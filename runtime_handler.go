@@ -3,52 +3,14 @@ package heresy
 import (
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/dop251/goja"
-	"go.uber.org/zap"
 )
 
 var (
-	ErrRuntimeNotReady = fmt.Errorf("middleware runtime is not ready")
-	ErrNoHandler       = fmt.Errorf("middleware script has no http handler configured")
+	ErrRuntimeNotReady     = fmt.Errorf("middleware runtime is not ready")
+	ErrNoMiddlewareHandler = fmt.Errorf("middleware script has no handler configured")
 )
-
-func (rt *Runtime) FetchEvent(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rt.shardRun(func(instance *runtimeInstance) {
-			if instance == nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				fmt.Fprint(w, ErrRuntimeNotReady)
-				return
-			}
-
-			eventHandler, ok := instance.eventHandler.Load().(goja.Value)
-			if !ok {
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprint(w, ErrNoHandler)
-				return
-			}
-
-			evt := instance.eventPool.Get()
-			defer instance.eventPool.Put(evt)
-
-			evt = evt.WithHttp(w, r, next)
-
-			if err := instance.resolver.NewPromise(
-				eventHandler,
-				evt.nativeEvt,
-				evt.nativeResolve,
-				evt.nativeReject,
-			); err != nil {
-				rt.logger.Error("Unexpected runtime exception", zap.Error(err))
-				evt.exception(err)
-			}
-
-			evt.wait()
-		})
-	})
-}
 
 func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,42 +21,77 @@ func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 				return
 			}
 
-			middlewareHandler, ok := instance.middlewareHandler.Load().(goja.Value)
-			if !ok {
+			middlewareType := instance.middlewareType.Load().(handlerType)
+			if middlewareType == handlerTypeUnset {
 				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprint(w, ErrNoHandler)
+				fmt.Fprint(w, ErrNoMiddlewareHandler)
 				return
 			}
 
-			ctx := instance.contextPool.Get()
-			defer instance.contextPool.Put(ctx)
-
-			ctx = ctx.WithHttp(w, r, next)
-
-			handlerOption := instance.handlerOption.Load()
-			if handlerOption.EnableFetch {
-				fetch := &fetchConfig{
-					context:   r.Context(),
-					eventLoop: instance.eventLoop,
-					scheduler: rt.scheduler,
-					client: &http.Client{
-						Timeout: time.Second * 15,
-					},
-				}
-				ctx.WithFetch(fetch)
+			switch middlewareType {
+			case handlerTypeEvent:
+				instance.handleAsEvent(w, r, next)
+			case handlerTypeExpress:
+				instance.handleAsExpress(w, r, next)
 			}
-
-			if err := instance.resolver.NewPromise(
-				middlewareHandler,
-				ctx.nativeCtx,
-				ctx.nativeResolve,
-				ctx.nativeReject,
-			); err != nil {
-				rt.logger.Error("Unexpected runtime exception", zap.Error(err))
-				ctx.exception(err)
-			}
-
-			ctx.wait()
 		})
 	})
+}
+
+func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
+
+	ctx := inst.contextPool.Get()
+	defer inst.contextPool.Put(ctx)
+
+	ctx.WithHttp(w, r, next)
+
+	handlerOption := inst.handlerOption.Load()
+	if handlerOption.EnableFetch {
+		fetcher, err := inst.fetcher.NewFetch(r.Context())
+		if err != nil {
+			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
+		}
+		ctx.WithFetch(fetcher)
+	}
+
+	if err := inst.resolver.NewPromise(
+		middlewareHandler,
+		ctx.nativeCtx,
+		ctx.nativeResolve,
+		ctx.nativeReject,
+	); err != nil {
+		ctx.exception(err)
+	}
+
+	ctx.wait()
+}
+
+func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
+
+	evt := inst.eventPool.Get()
+	defer inst.eventPool.Put(evt)
+
+	evt.WithHttp(w, r, next)
+
+	handlerOption := inst.handlerOption.Load()
+	if handlerOption.EnableFetch {
+		fetcher, err := inst.fetcher.NewFetch(r.Context())
+		if err != nil {
+			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
+		}
+		evt.WithFetch(fetcher)
+	}
+
+	if err := inst.resolver.NewPromise(
+		middlewareHandler,
+		evt.nativeEvt,
+		evt.nativeResolve,
+		evt.nativeReject,
+	); err != nil {
+		evt.exception(err)
+	}
+
+	evt.wait()
 }

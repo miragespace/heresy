@@ -39,7 +39,7 @@ func main() {
 	router.Mount("/reload", http.HandlerFunc(reloadScript(logger, rt)))
 
 	index := chi.NewRouter()
-	index.Use(rt.FetchEvent)
+	index.Use(rt.Middleware)
 	index.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "index")
 	}))
@@ -50,8 +50,6 @@ func main() {
 	if len(args) > 1 {
 		addr = args[1]
 	}
-
-	logger.Info("ready", zap.String("addr", addr))
 
 	srv := &http.Server{
 		Addr:    addr,
@@ -124,7 +122,6 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 			return
 		}
 
-		logger.Info("script loaded", zap.String("filename", p.FileName()), zap.Int("size", len(script)))
 		w.WriteHeader(http.StatusAccepted)
 	}
 }

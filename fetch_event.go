@@ -14,12 +14,14 @@ type fetchEvent struct {
 	httpResp          http.ResponseWriter
 	httpNext          http.Handler
 	requestProxy      *fetchEventRequest
+	nativeFetch       goja.Value
 	nativeResolve     goja.Value
 	nativeReject      goja.Value
 	done              chan struct{}
 	vm                *goja.Runtime
 	nativeEvt         *goja.Object
 	nativeEvtInstance *goja.Object
+	hasFetch          bool
 	skipNext          bool
 }
 
@@ -53,12 +55,14 @@ func newFetchEvent(vm *goja.Runtime, controller *stream.StreamController) *fetch
 	return evt
 }
 
-func (evt *fetchEvent) reset() {
+func (evt *fetchEvent) Reset() {
 	evt.httpReq = nil
 	evt.httpResp = nil
 	evt.httpNext = nil
+	evt.nativeFetch = nil
+	evt.hasFetch = false
 	evt.skipNext = false
-	evt.requestProxy.reset()
+	evt.requestProxy.Reset()
 }
 
 func (evt *fetchEvent) Get(key string) goja.Value {
@@ -69,6 +73,11 @@ func (evt *fetchEvent) Get(key string) goja.Value {
 		return evt.vm.ToValue(evt.nativeWaitUntil)
 	case "request":
 		return evt.requestProxy.nativeReq
+	case "fetch":
+		if evt.hasFetch {
+			return evt.nativeFetch
+		}
+		fallthrough
 	default:
 		return evt.nativeEvtInstance.Get(key)
 	}
@@ -97,6 +106,12 @@ func (evt *fetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next htt
 
 	evt.requestProxy.initialize()
 
+	return evt
+}
+
+func (evt *fetchEvent) WithFetch(f goja.Value) *fetchEvent {
+	evt.hasFetch = true
+	evt.nativeFetch = f
 	return evt
 }
 

@@ -1,7 +1,7 @@
 async function eventHandler(evt) {
     console.log(evt)
     console.log(Object.getOwnPropertyNames(evt))
-    const { request } = evt
+    const { fetch, request } = evt
     console.log(request)
     console.log(request.url)
     const url = new URL(request.url)
@@ -17,9 +17,15 @@ async function eventHandler(evt) {
         console.log(request.body)
         console.log("body used", request.bodyUsed)
         const json = await request.json()
-        console.log(JSON.stringify(json))
+        console.log('body', JSON.stringify(json))
         console.log("body used", request.bodyUsed)
+        const resp = await fetch("https://example.com", {
+            headers: json
+        })
+        console.log((await resp.text()).length)
     }
 }
 
-registerEventHandler(eventHandler)
+registerEventHandler(eventHandler, {
+    fetch: true
+})

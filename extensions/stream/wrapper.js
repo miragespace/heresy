@@ -1,6 +1,6 @@
 "use strict";
 const __runtimeIOReaderWrapper = (goWrapper) => {
-    return new ReadableStream({
+    const stream = new ReadableStream({
         type: "bytes",
         autoAllocateChunkSize: goWrapper.bufferSize,
         async pull(controller) {
@@ -19,4 +19,8 @@ const __runtimeIOReaderWrapper = (goWrapper) => {
             goWrapper.close(goWrapper);
         },
     });
+    // save the reference of NativeReaderWrapper,
+    // needed for Fetcher
+    stream.wrapper = goWrapper;
+    return stream;
 };

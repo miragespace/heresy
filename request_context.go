@@ -23,8 +23,7 @@ type requestContext struct {
 	nextInvoked   bool
 	responseSent  bool
 
-	statusSet  bool
-	statusCode int
+	statusSet bool
 }
 
 var _ goja.DynamicObject = (*requestContext)(nil)
@@ -47,10 +46,11 @@ func (ctx *requestContext) reset() {
 	ctx.httpReq = nil
 	ctx.httpResp = nil
 	ctx.httpNext = nil
+	ctx.nativeFetch = nil
 	ctx.hasFetch = false
 	ctx.nextInvoked = false
 	ctx.responseSent = false
-	ctx.responseProxy.reset()
+	ctx.responseProxy.Reset()
 }
 
 func (ctx *requestContext) Get(key string) goja.Value {
@@ -99,9 +99,9 @@ func (ctx *requestContext) WithHttp(w http.ResponseWriter, r *http.Request, next
 	return ctx
 }
 
-func (ctx *requestContext) WithFetch(f *fetchConfig) *requestContext {
+func (ctx *requestContext) WithFetch(f goja.Value) *requestContext {
 	ctx.hasFetch = true
-	ctx.nativeFetch = ctx.vm.ToValue(f.nativeFetch)
+	ctx.nativeFetch = f
 	return ctx
 }
 

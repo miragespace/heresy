@@ -3,10 +3,13 @@ package heresy
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
 	"go.miragespace.co/heresy/polyfill"
@@ -33,15 +36,24 @@ type instanceShard struct {
 	instance *runtimeInstance
 }
 
+type handlerType int
+
+const (
+	handlerTypeUnset handlerType = iota
+	handlerTypeExpress
+	handlerTypeEvent
+)
+
 type runtimeInstance struct {
 	middlewareHandler atomic.Value                         // goja.Value
-	eventHandler      atomic.Value                         // goja.Value
+	middlewareType    atomic.Value                         // handlerType
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
 	contextPool       *requestContextPool
 	eventPool         *fetchEventPool
 	eventLoop         *eventloop.EventLoop
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
+	fetcher           *fetch.Fetcher
 	vm                *goja.Runtime
 }
 
@@ -67,6 +79,11 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 		rt.shards[i] = &instanceShard{}
 	}
 
+	logger.Info("Heresy runtime configured",
+		zap.Int("scheduler.maxWorkers", 100),
+		zap.Int("shards", shards),
+	)
+
 	return rt, nil
 }
 
@@ -87,6 +104,7 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 	// force GC on script reload
 	defer runtime.GC()
 
+	start := time.Now()
 	for _, shard := range rt.shards {
 		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
@@ -111,6 +129,13 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 		shard.instance = instance
 		shard.mu.Unlock()
 	}
+
+	duration := time.Since(start)
+	rt.logger.Info("All shards reloaded",
+		zap.Duration("duration", duration),
+		zap.String("script", scriptName),
+		zap.Int("shards", rt.numShards),
+	)
 
 	return nil
 }
@@ -157,8 +182,21 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		return
 	}
 
+	instance.fetcher, err = fetch.NewFetcher(fetch.FetcherConfig{
+		Eventloop: eventLoop,
+		Stream:    instance.stream,
+		Scheduler: rt.scheduler,
+		Client: &http.Client{
+			Timeout: time.Second * 10,
+		},
+	})
+	if err != nil {
+		return
+	}
+
 	var options nativeHandlerOptions
 	instance.handlerOption.Store(&options)
+	instance.middlewareType.Store(handlerTypeUnset)
 
 	err = <-instance.prepareInstance()
 
@@ -204,13 +242,14 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 
+			opt := fc.Argument(1)
+			inst.optionHelper(vm, opt)
+
 			fn := fc.Argument(0)
 			if _, ok := goja.AssertFunction(fn); ok {
 				inst.middlewareHandler.Store(fn)
+				inst.middlewareType.Store(handlerTypeExpress)
 			}
-
-			opt := fc.Argument(1)
-			inst.optionHelper(vm, opt)
 
 			return
 		})
@@ -218,13 +257,14 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 		vm.Set("registerEventHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 
-			fn := fc.Argument(0)
-			if _, ok := goja.AssertFunction(fn); ok {
-				inst.eventHandler.Store(fn)
-			}
-
 			opt := fc.Argument(1)
 			inst.optionHelper(vm, opt)
+
+			fn := fc.Argument(0)
+			if _, ok := goja.AssertFunction(fn); ok {
+				inst.middlewareHandler.Store(fn)
+				inst.middlewareType.Store(handlerTypeEvent)
+			}
 
 			return
 		})

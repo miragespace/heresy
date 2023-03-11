@@ -2,7 +2,12 @@
 
 async function httpHandler(ctx) {
     const { fetch, res } = ctx
-	const html = await fetch("https://example.com/")
+	const resp = await fetch("https://example.com/", {
+        headers: {
+            'User-Agent': 'heresy/fetcher'
+        }
+    })
+    const html = await resp.text()
     res.send(html)
 }
 
