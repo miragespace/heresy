@@ -37,10 +37,10 @@ type runtimeInstance struct {
 	eventHandler      atomic.Value                         // goja.Value
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
 	contextPool       *requestContextPool
+	eventPool         *fetchEventPool
 	eventLoop         *eventloop.EventLoop
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
-	vm                *goja.Runtime
 
 	_testDrainStream goja.Value
 }
@@ -224,7 +224,7 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 		})
 
 		inst.contextPool = newRequestContextPool(inst)
-		inst.vm = vm
+		inst.eventPool = newFetchEventPool(inst)
 
 		setup <- nil
 	})

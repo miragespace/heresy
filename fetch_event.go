@@ -9,34 +9,48 @@ import (
 )
 
 type fetchEvent struct {
-	httpReq       *http.Request
-	httpResp      http.ResponseWriter
-	httpNext      http.Handler
-	requestProxy  *fetchEventRequest
-	nativeResolve goja.Value
-	nativeReject  goja.Value
-	done          chan struct{}
-	vm            *goja.Runtime
-	nativeEvt     *goja.Object
-	skipNext      bool
+	stream            *stream.StreamController
+	httpReq           *http.Request
+	httpResp          http.ResponseWriter
+	httpNext          http.Handler
+	requestProxy      *fetchEventRequest
+	nativeResolve     goja.Value
+	nativeReject      goja.Value
+	done              chan struct{}
+	vm                *goja.Runtime
+	nativeEvt         *goja.Object
+	nativeEvtInstance *goja.Object
+	skipNext          bool
 }
 
 var _ goja.DynamicObject = (*fetchEvent)(nil)
 
 func newFetchEvent(vm *goja.Runtime, controller *stream.StreamController) *fetchEvent {
 	evt := &fetchEvent{
-		done: make(chan struct{}, 1),
-		vm:   vm,
+		stream: controller,
+		done:   make(chan struct{}, 1),
+		vm:     vm,
 	}
 
-	return evt
-}
+	fetchEventClass := evt.vm.Get("FetchEvent")
+	fetchEventConstructor, ok := goja.AssertConstructor(fetchEventClass)
+	if !ok {
+		panic("runtime panic: FetchEvent is not a constructor, please check if polyfill is enabled")
+	}
 
-func (evt *fetchEvent) init(vm *goja.Runtime, controller *stream.StreamController) {
-	evt.requestProxy = newFetchEventRequest(evt, controller)
+	var err error
+	evt.nativeEvtInstance, err = fetchEventConstructor(nil)
+	if err != nil {
+		panic(fmt.Errorf("runtime panic: (new FetchEvent) constructor call returned an error: %w", err))
+	}
+
+	evt.requestProxy = newFetchEventRequest(evt)
 	evt.nativeResolve = evt.getNativeEventResolver()
 	evt.nativeReject = evt.getNativeEventRejector()
-	evt.nativeEvt = vm.NewDynamicObject(evt)
+	evt.nativeEvt = evt.vm.NewDynamicObject(evt)
+	evt.nativeEvt.SetPrototype(evt.nativeEvtInstance)
+
+	return evt
 }
 
 func (evt *fetchEvent) reset() {
@@ -44,6 +58,7 @@ func (evt *fetchEvent) reset() {
 	evt.httpResp = nil
 	evt.httpNext = nil
 	evt.skipNext = false
+	evt.requestProxy.reset()
 }
 
 func (evt *fetchEvent) Get(key string) goja.Value {
@@ -79,6 +94,8 @@ func (evt *fetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next htt
 	evt.httpResp = w
 	evt.httpReq = r
 	evt.httpNext = next
+
+	evt.requestProxy.initialize()
 
 	return evt
 }

@@ -30,15 +30,10 @@ func (rt *Runtime) FetchEvent(next http.Handler) http.Handler {
 				return
 			}
 
-			var evt *fetchEvent
-			got := make(chan struct{})
-			instance.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-				evt = newFetchEvent(vm, instance.stream)
-				evt = evt.WithHttp(w, r, next)
-				evt.init(vm, instance.stream)
-				close(got)
-			})
-			<-got
+			evt := instance.eventPool.Get()
+			defer instance.eventPool.Put(evt)
+
+			evt = evt.WithHttp(w, r, next)
 
 			if err := instance.resolver.NewPromise(
 				eventHandler,
