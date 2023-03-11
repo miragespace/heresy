@@ -34,6 +34,7 @@ type instanceShard struct {
 
 type runtimeInstance struct {
 	middlewareHandler atomic.Value                         // goja.Value
+	eventHandler      atomic.Value                         // goja.Value
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
 	contextPool       *requestContextPool
 	eventLoop         *eventloop.EventLoop
@@ -177,6 +178,16 @@ func (rt *Runtime) Stop() {
 	rt.scheduler.Stop()
 }
 
+func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
+	if goja.IsUndefined(opt) {
+		return
+	}
+	var options nativeHandlerOptions
+	if err := vm.ExportTo(opt, &options); err == nil {
+		inst.handlerOption.Store(&options)
+	}
+}
+
 func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 	setup = make(chan error, 1)
 
@@ -193,13 +204,22 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 			}
 
 			opt := fc.Argument(1)
-			if goja.IsUndefined(opt) {
-				return
+			inst.optionHelper(vm, opt)
+
+			return
+		})
+
+		vm.Set("registerEventHandler", func(fc goja.FunctionCall) (ret goja.Value) {
+			ret = goja.Undefined()
+
+			fn := fc.Argument(0)
+			if _, ok := goja.AssertFunction(fn); ok {
+				inst.eventHandler.Store(fn)
 			}
-			var options nativeHandlerOptions
-			if err := vm.ExportTo(opt, &options); err == nil {
-				inst.handlerOption.Store(&options)
-			}
+
+			opt := fc.Argument(1)
+			inst.optionHelper(vm, opt)
+
 			return
 		})
 

@@ -40,8 +40,8 @@ func main() {
 	router.Mount("/test", http.HandlerFunc(rt.TestStream))
 
 	index := chi.NewRouter()
-	index.Use(rt.Middleware)
-	index.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	index.Use(rt.FetchEvent)
+	index.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "index")
 	}))
 
