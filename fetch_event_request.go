@@ -16,7 +16,8 @@ type fetchEventRequest struct {
 	bodyConsumed          bool
 }
 
-// TODO: need to make Headers and Request as DynamicObjects
+var _ goja.DynamicObject = (*fetchEventRequest)(nil)
+
 func newFetchEventRequest(evt *fetchEvent) *fetchEventRequest {
 	req := &fetchEventRequest{
 		fetchEvent:   evt,

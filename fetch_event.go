@@ -70,7 +70,7 @@ func (evt *fetchEvent) Get(key string) goja.Value {
 	case "request":
 		return evt.requestProxy.nativeReq
 	default:
-		return goja.Undefined()
+		return evt.nativeEvtInstance.Get(key)
 	}
 }
 
@@ -124,7 +124,7 @@ func (evt *fetchEvent) exception(err error) {
 }
 
 func (evt *fetchEvent) getNativeEventResolver() goja.Value {
-	return nativeEventWrapper(evt, func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
+	return evt.nativeEventWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
 		if evt.skipNext {
 			return
 		}
@@ -133,7 +133,7 @@ func (evt *fetchEvent) getNativeEventResolver() goja.Value {
 }
 
 func (evt *fetchEvent) getNativeEventRejector() goja.Value {
-	return nativeEventWrapper(evt, func(w http.ResponseWriter, r *http.Request, v goja.Value) {
+	return evt.nativeEventWrapper(func(w http.ResponseWriter, r *http.Request, v goja.Value) {
 		w.WriteHeader(http.StatusInternalServerError)
 		if goja.IsUndefined(v) {
 			return
@@ -142,8 +142,7 @@ func (evt *fetchEvent) getNativeEventRejector() goja.Value {
 	})
 }
 
-func nativeEventWrapper(
-	evt *fetchEvent,
+func (evt *fetchEvent) nativeEventWrapper(
 	fn func(w http.ResponseWriter, r *http.Request, v goja.Value),
 ) goja.Value {
 	return evt.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
