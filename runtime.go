@@ -1,6 +1,7 @@
 package heresy
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sync"
@@ -41,8 +42,7 @@ type runtimeInstance struct {
 	eventLoop         *eventloop.EventLoop
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
-
-	_testDrainStream goja.Value
+	vm                *goja.Runtime
 }
 
 // NewRuntime returns a new heresy runtime. Use shards > 1 to enable round-robin
@@ -71,8 +71,10 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 }
 
 // LoadScript reload the script handling incoming request on-the-fly. Script
-// will be executed in a fresh runtime.
-func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
+// will be executed in a fresh runtime. Specifying interrupt will interrupt
+// currently running VM instead of graceful exit. This is useful when the script
+// was misbehaving and needs to be reloaded.
+func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err error) {
 	var (
 		prog *goja.Program
 	)
@@ -86,8 +88,6 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 	defer runtime.GC()
 
 	for _, shard := range rt.shards {
-		shard.mu.Lock()
-
 		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
 		runtimeLogger := newRuntimeLogger(scriptName, rt.logger)
@@ -96,7 +96,6 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 
 		instance, err := rt.getInstance(registry)
 		if err != nil {
-			shard.mu.Unlock()
 			return err
 		}
 
@@ -105,11 +104,11 @@ func (rt *Runtime) LoadScript(scriptName, script string) (err error) {
 			return err
 		}
 
+		shard.mu.Lock()
 		if shard.instance != nil {
-			shard.instance.eventLoop.StopNoWait()
+			shard.instance.stop(interrupt)
 		}
 		shard.instance = instance
-
 		shard.mu.Unlock()
 	}
 
@@ -166,16 +165,23 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	return
 }
 
-func (rt *Runtime) Stop() {
+func (rt *Runtime) Stop(interrupt bool) {
 	for _, shard := range rt.shards {
 		shard.mu.Lock()
 		if shard.instance != nil {
-			shard.instance.eventLoop.StopNoWait()
+			shard.instance.stop(interrupt)
 			shard.instance = nil
 		}
 		shard.mu.Unlock()
 	}
 	rt.scheduler.Stop()
+}
+
+func (inst *runtimeInstance) stop(interrupt bool) {
+	if interrupt {
+		inst.vm.Interrupt(context.Canceled)
+	}
+	inst.eventLoop.StopNoWait()
 }
 
 func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
@@ -225,6 +231,7 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 
 		inst.contextPool = newRequestContextPool(inst)
 		inst.eventPool = newFetchEventPool(inst)
+		inst.vm = vm // reference is kept for .Interrupt
 
 		setup <- nil
 	})
@@ -241,9 +248,6 @@ func (inst *runtimeInstance) loadProgram(prog *goja.Program) (setup chan error) 
 			setup <- fmt.Errorf("error setting up handler script: %w", err)
 			return
 		}
-
-		inst._testDrainStream = vm.Get("drainStream")
-
 		setup <- nil
 	})
 

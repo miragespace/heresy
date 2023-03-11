@@ -42,7 +42,7 @@ func TestEmptyRuntime(t *testing.T) {
 
 	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
-	defer rt.Stop()
+	defer rt.Stop(true)
 
 	req := httptest.NewRequest(http.MethodGet, "http://test/", nil)
 	w := httptest.NewRecorder()
@@ -64,9 +64,9 @@ func TestRuntimeNoHandler(t *testing.T) {
 
 	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
-	defer rt.Stop()
+	defer rt.Stop(true)
 
-	err = rt.LoadScript("no_handler.js", testScriptNoHandler)
+	err = rt.LoadScript("no_handler.js", testScriptNoHandler, false)
 	as.NoError(err)
 
 	req := httptest.NewRequest(http.MethodGet, "http://test/", nil)
@@ -89,9 +89,9 @@ func TestRuntimeScriptReload(t *testing.T) {
 
 	rt, err := NewRuntime(logger, 1)
 	as.NoError(err)
-	defer rt.Stop()
+	defer rt.Stop(true)
 
-	err = rt.LoadScript("promise.js", testScriptPromise)
+	err = rt.LoadScript("promise.js", testScriptPromise, false)
 	as.NoError(err)
 
 	router := chi.NewRouter()
@@ -110,7 +110,7 @@ func TestRuntimeScriptReload(t *testing.T) {
 	as.NoError(err)
 	as.Equal("promise", string(body))
 
-	err = rt.LoadScript("plain.js", testScriptPlain)
+	err = rt.LoadScript("plain.js", testScriptPlain, false)
 	as.NoError(err)
 
 	req = httptest.NewRequest(http.MethodGet, "http://test/", nil)

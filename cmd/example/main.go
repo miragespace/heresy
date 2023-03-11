@@ -32,7 +32,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer rt.Stop()
+	defer rt.Stop(true)
 
 	router := chi.NewRouter()
 	router.Mount("/debug", middleware.Profiler())
@@ -117,7 +117,7 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 			script = string(scriptBytes)
 		}
 
-		err = rt.LoadScript(p.FileName(), script)
+		err = rt.LoadScript(p.FileName(), script, true)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Error reloading script: %v", err)
