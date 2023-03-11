@@ -1,8 +1,17 @@
 # 😅 Heresy
 
-[![GoDoc](https://godoc.org/github.com/urfave/cli?status.svg)](https://pkg.go.dev/go.miragespace.co/heresy)
+[![GoDoc](https://godoc.org/go.miragespace.co/heresy?status.svg)](https://pkg.go.dev/go.miragespace.co/heresy)
 
 ## What is it?
+
+```
+Heresy
+noun, /ˈher.ə.si/
+
+(the act of having) an opinion or belief that is the opposite of
+    or against what is the official or popular opinion,
+    or an action that shows that you have no respect for the official opinion.
+```
 
 Heresy is a runtime to allow you to run JavaScript as middleware for `http.Server` in either Express.js style or Web Worker `FetchEvent` style, with support for hot-reloading the JavaScript.
 
