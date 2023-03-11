@@ -39,7 +39,7 @@ func newFetchEventRequest(evt *fetchEvent) *fetchEventRequest {
 	}
 
 	req.nativeReq = evt.vm.NewDynamicObject(req)
-	req.nativeReq.SetPrototype(req.nativeRequestInstance)
+	req.nativeReq.SetPrototype(req.nativeRequestInstance.Prototype())
 
 	return req
 }
@@ -71,12 +71,12 @@ func (req *fetchEventRequest) Get(key string) goja.Value {
 		return req.vm.ToValue(req.httpReq.URL.Path)
 	case "method":
 		return req.vm.ToValue(req.httpReq.Method)
-	case "_consumed":
-		return req.vm.ToValue(req.bodyConsumed)
 
-	case "bodyInit":
-		fallthrough
-	case "_bodyReadableStream":
+	// NOTE: since this is a fake Request object, any access to the properties in Body class
+	// needs to be handled by us as these fields won't be set by the constructor.
+	case "bodyUsed", "_consumed":
+		return req.vm.ToValue(req.bodyConsumed)
+	case "body", "bodyInit", "_bodyReadableStream":
 		return req.nativeBody
 
 	case "headers":
@@ -106,5 +106,5 @@ func (req *fetchEventRequest) Delete(key string) bool {
 }
 
 func (req *fetchEventRequest) Keys() []string {
-	return []string{"bodyInit", "url", "method", "headers"}
+	return []string{"body", "bodyUsed", "headers", "method", "url"}
 }

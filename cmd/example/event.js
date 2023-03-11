@@ -9,8 +9,11 @@ async function eventHandler(evt) {
         console.log(k, v)
     }
     if (request.method == "POST") {
+        console.log(request.body)
+        console.log("body used", request.bodyUsed)
         const json = await request.json()
         console.log(JSON.stringify(json))
+        console.log("body used", request.bodyUsed)
     }
 }
 

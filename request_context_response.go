@@ -62,7 +62,7 @@ func (res *contextResponse) Delete(_ string) bool {
 }
 
 func (res *contextResponse) Keys() []string {
-	return []string{"status", "send", "json", "get", "end", "set", "header", "headersSent"}
+	return []string{"headersSent"}
 }
 
 func (res *contextResponse) reset() {

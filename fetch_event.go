@@ -48,7 +48,7 @@ func newFetchEvent(vm *goja.Runtime, controller *stream.StreamController) *fetch
 	evt.nativeResolve = evt.getNativeEventResolver()
 	evt.nativeReject = evt.getNativeEventRejector()
 	evt.nativeEvt = evt.vm.NewDynamicObject(evt)
-	evt.nativeEvt.SetPrototype(evt.nativeEvtInstance)
+	evt.nativeEvt.SetPrototype(evt.nativeEvtInstance.Prototype())
 
 	return evt
 }
@@ -87,7 +87,7 @@ func (evt *fetchEvent) Delete(key string) bool {
 }
 
 func (evt *fetchEvent) Keys() []string {
-	return []string{"request", "respondWith", "waitUntil"}
+	return []string{"request"}
 }
 
 func (evt *fetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *fetchEvent {

@@ -85,10 +85,9 @@ func (ctx *requestContext) Delete(key string) bool {
 
 func (ctx *requestContext) Keys() []string {
 	if ctx.hasFetch {
-		return []string{"req", "res", "next", "fetch"}
+		return []string{"fetch", "next", "req", "res"}
 	} else {
-
-		return []string{"req", "res", "next"}
+		return []string{"next", "req", "res"}
 	}
 }
 

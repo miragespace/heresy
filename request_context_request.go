@@ -69,7 +69,7 @@ func (req *contextRequest) Delete(_ string) bool {
 }
 
 func (req *contextRequest) Keys() []string {
-	return []string{"ip", "method", "path", "protocol", "secure", "get", "res"}
+	return []string{"ip", "method", "path", "protocol", "res", "secure"}
 }
 
 // implement Request.get(field) of Express.js
