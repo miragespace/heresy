@@ -133,7 +133,7 @@ func (ctx *requestContext) exception(err error) {
 }
 
 func (ctx *requestContext) getNativeContextResolver() goja.Value {
-	return nativeContextWrapper(ctx.vm, ctx, func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
+	return nativeContextWrapper(ctx, func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
 		if ctx.statusSet || ctx.responseSent {
 			return
 		}
@@ -142,7 +142,7 @@ func (ctx *requestContext) getNativeContextResolver() goja.Value {
 }
 
 func (ctx *requestContext) getNativeContextRejector() goja.Value {
-	return nativeContextWrapper(ctx.vm, ctx, func(w http.ResponseWriter, r *http.Request, v goja.Value) {
+	return nativeContextWrapper(ctx, func(w http.ResponseWriter, r *http.Request, v goja.Value) {
 		w.WriteHeader(http.StatusInternalServerError)
 		if goja.IsUndefined(v) {
 			return
@@ -152,11 +152,10 @@ func (ctx *requestContext) getNativeContextRejector() goja.Value {
 }
 
 func nativeContextWrapper(
-	vm *goja.Runtime,
 	ctx *requestContext,
 	fn func(w http.ResponseWriter, r *http.Request, v goja.Value),
 ) goja.Value {
-	return vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+	return ctx.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
 		if ctx.nextInvoked || ctx.responseSent {
 			ctx.done <- struct{}{}
 			return goja.Undefined()
