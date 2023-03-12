@@ -16,7 +16,7 @@ type requestContext struct {
 	nativeFetch   goja.Value
 	nativeResolve goja.Value
 	nativeReject  goja.Value
-	done          chan struct{}
+	requestDone   chan struct{}
 	vm            *goja.Runtime
 	nativeCtx     *goja.Object
 	hasFetch      bool
@@ -30,8 +30,8 @@ var _ goja.DynamicObject = (*requestContext)(nil)
 
 func newRequestContext(vm *goja.Runtime) *requestContext {
 	ctx := &requestContext{
-		done: make(chan struct{}, 1),
-		vm:   vm,
+		requestDone: make(chan struct{}, 1),
+		vm:          vm,
 	}
 	ctx.nativeResolve = ctx.getNativeContextResolver()
 	ctx.nativeReject = ctx.getNativeContextRejector()
@@ -117,7 +117,7 @@ func (ctx *requestContext) nativeNext(fc goja.FunctionCall) goja.Value {
 }
 
 func (ctx *requestContext) wait() {
-	<-ctx.done
+	<-ctx.requestDone
 }
 
 func (ctx *requestContext) exception(err error) {
@@ -128,7 +128,7 @@ func (ctx *requestContext) exception(err error) {
 		fmt.Fprintf(ctx.httpResp, "Unexpected runtime exception: %+v", err)
 	}
 	ctx.responseSent = true
-	ctx.done <- struct{}{}
+	ctx.wake()
 }
 
 func (ctx *requestContext) getNativeContextResolver() goja.Value {
@@ -155,7 +155,7 @@ func (ctx *requestContext) nativeContextWrapper(
 ) goja.Value {
 	return ctx.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
 		if ctx.nextInvoked || ctx.responseSent {
-			ctx.done <- struct{}{}
+			ctx.wake()
 			return goja.Undefined()
 		}
 		select {
@@ -165,7 +165,11 @@ func (ctx *requestContext) nativeContextWrapper(
 			fn(ctx.httpResp, ctx.httpReq, v)
 		}
 		ctx.responseSent = true
-		ctx.done <- struct{}{}
+		ctx.wake()
 		return goja.Undefined()
 	})
+}
+
+func (ctx *requestContext) wake() {
+	ctx.requestDone <- struct{}{}
 }

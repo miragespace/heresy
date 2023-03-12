@@ -8,6 +8,7 @@ require (
 	github.com/dop251/goja v0.0.0-20230304130813-e2f543bf4b4c
 	github.com/dop251/goja_nodejs v0.0.0-20230226152057-060fa99b809f
 	github.com/go-chi/chi/v5 v5.0.8
+	github.com/libp2p/go-buffer-pool v0.1.0
 	github.com/stretchr/testify v1.8.2
 	go.uber.org/zap v1.24.0
 )

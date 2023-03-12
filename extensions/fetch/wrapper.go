@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	fetchWrapperSymbol = "__runtimeFetch"
+	fetchWrapperSymbol   = "__runtimeFetch"
+	responseHelperSymbol = "__runtimeResponseHelper"
 )
 
 //go:embed wrapper.js

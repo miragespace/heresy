@@ -22,3 +22,20 @@ const __runtimeFetch = (goWrapper) => {
         });
     };
 };
+// this is a helper for FetchEvent.respondWith
+const __runtimeResponseHelper = async (response) => {
+    const { status, headers } = response;
+    const rawHeadersMap = {};
+    headers.forEach((v, k) => {
+        rawHeadersMap[k] = v;
+    });
+    const requestBody = response;
+    let useBody;
+    if (requestBody._bodyReadableStream) {
+        useBody = requestBody._bodyReadableStream;
+    }
+    else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+        useBody = await requestBody.text();
+    }
+    return [status, rawHeadersMap, useBody];
+};

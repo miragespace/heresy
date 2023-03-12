@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	promiseResolverSymbol = "__runtimeResolver"
+	promiseResolverFuncWithArgSymbol    = "__runtimeResolverFuncWithArg"
+	promiseResolverFuncWithSpreadSymbol = "__runtimeResolverFuncWithSpread"
 )
 
 //go:embed wrapper.js

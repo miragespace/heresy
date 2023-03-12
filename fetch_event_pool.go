@@ -26,7 +26,7 @@ func newFetchEventPool(inst *runtimeInstance) *fetchEventPool {
 			// initialization of new native variable has to be
 			// ran on the loop
 			inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-				ctxCh <- newFetchEvent(vm, inst.stream)
+				ctxCh <- newFetchEvent(vm, inst)
 			})
 			return <-ctxCh
 		},

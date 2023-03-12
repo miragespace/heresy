@@ -48,14 +48,14 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
-		fetcher, err := inst.fetcher.NewFetch(r.Context())
+		fetcher, err := inst.fetcher.NewNativeFetch(r.Context())
 		if err != nil {
 			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
 		}
 		ctx.WithFetch(fetcher)
 	}
 
-	if err := inst.resolver.NewPromise(
+	if err := inst.resolver.NewPromiseFuncWithArg(
 		middlewareHandler,
 		ctx.nativeCtx,
 		ctx.nativeResolve,
@@ -77,18 +77,18 @@ func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Reques
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
-		fetcher, err := inst.fetcher.NewFetch(r.Context())
+		fetcher, err := inst.fetcher.NewNativeFetch(r.Context())
 		if err != nil {
 			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
 		}
 		evt.WithFetch(fetcher)
 	}
 
-	if err := inst.resolver.NewPromise(
+	if err := inst.resolver.NewPromiseFuncWithArg(
 		middlewareHandler,
 		evt.nativeEvt,
-		evt.nativeResolve,
-		evt.nativeReject,
+		evt.nativeRequestResolve,
+		evt.nativeRequestReject,
 	); err != nil {
 		evt.exception(err)
 	}

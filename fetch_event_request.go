@@ -49,7 +49,7 @@ func (req *fetchEventRequest) initialize() {
 	switch req.httpReq.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		nativeBody, err := req.stream.NewReadableStream(req.httpReq.Body)
+		nativeBody, err := req.instance.stream.NewReadableStream(req.httpReq.Body)
 		if err != nil {
 			panic(fmt.Errorf("runtime panic: Failed to convert httpReq.Body into native ReadableStream: %w", err))
 		}

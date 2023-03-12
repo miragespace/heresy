@@ -20,7 +20,6 @@ interface RuntimeFetchHandler {
 }
 
 interface Body {
-  _consumed: boolean;
   readonly _bodyReadableStream?: ReadableStream;
   readonly _bodyArrayBuffer?: ArrayBuffer;
   readonly _bodyText?: string;
@@ -62,4 +61,24 @@ const __runtimeFetch = (
       headers: header,
     });
   };
+};
+
+// this is a helper for FetchEvent.respondWith
+const __runtimeResponseHelper = async (response: Response) => {
+  const { status, headers } = response;
+
+  const rawHeadersMap: Record<string, string> = {};
+  headers.forEach((v: string, k: string) => {
+    rawHeadersMap[k] = v;
+  });
+
+  const requestBody = response as Body;
+  let useBody: ReadableStream | string | undefined;
+  if (requestBody._bodyReadableStream) {
+    useBody = requestBody._bodyReadableStream;
+  } else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+    useBody = await requestBody.text();
+  }
+
+  return [status, rawHeadersMap, useBody];
 };

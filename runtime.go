@@ -41,6 +41,7 @@ const (
 )
 
 type runtimeInstance struct {
+	logger            *zap.Logger
 	middlewareHandler atomic.Value                         // goja.Value
 	middlewareType    atomic.Value                         // handlerType
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
@@ -49,7 +50,8 @@ type runtimeInstance struct {
 	eventLoop         *eventloop.EventLoop
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
-	fetcher           *fetch.Fetcher
+	fetcher           *fetch.Fetch
+	scheduler         *pond.WorkerPool
 	vm                *goja.Runtime
 }
 
@@ -155,7 +157,9 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	}()
 
 	instance = &runtimeInstance{
+		logger:    rt.logger,
 		eventLoop: eventLoop,
+		scheduler: rt.scheduler,
 	}
 
 	var options nativeHandlerOptions
@@ -182,7 +186,7 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		return
 	}
 
-	instance.fetcher, err = fetch.NewFetcher(fetch.FetcherConfig{
+	instance.fetcher, err = fetch.NewFetch(fetch.FetchConfig{
 		Eventloop: eventLoop,
 		Stream:    instance.stream,
 		Scheduler: rt.scheduler,
@@ -231,6 +235,7 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 		url.Enable(vm)
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
 		vm.Set("console", require.Require(vm, zap_console.ModuleName))
+
 		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 

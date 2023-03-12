@@ -9,7 +9,7 @@ import (
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
-const BufferSize = 8 * 1024
+const BufferSize = 16 * 1024
 
 type NativeReaderWrapper struct {
 	reader    io.ReadCloser

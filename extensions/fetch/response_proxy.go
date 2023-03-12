@@ -10,7 +10,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-type resultProxy struct {
+type responseProxy struct {
 	stream       *stream.StreamController
 	resp         *http.Response
 	vm           *goja.Runtime
@@ -19,10 +19,10 @@ type resultProxy struct {
 	nativeBody   goja.Value
 }
 
-var _ goja.DynamicObject = (*resultProxy)(nil)
+var _ goja.DynamicObject = (*responseProxy)(nil)
 
-func newResultProxy(vm *goja.Runtime, controller *stream.StreamController) *resultProxy {
-	r := &resultProxy{
+func newResultProxy(vm *goja.Runtime, controller *stream.StreamController) *responseProxy {
+	r := &responseProxy{
 		vm:           vm,
 		stream:       controller,
 		headersProxy: common.NewHeadersProxy(vm),
@@ -32,7 +32,7 @@ func newResultProxy(vm *goja.Runtime, controller *stream.StreamController) *resu
 	return r
 }
 
-func (r *resultProxy) WithResponse(vm *goja.Runtime, resp *http.Response) {
+func (r *responseProxy) WithResponse(vm *goja.Runtime, resp *http.Response) {
 	var err error
 	r.nativeBody, err = r.stream.NewReadableStreamVM(resp.Body, vm)
 	if err != nil {
@@ -42,13 +42,13 @@ func (r *resultProxy) WithResponse(vm *goja.Runtime, resp *http.Response) {
 	r.resp = resp
 }
 
-func (r *resultProxy) Reset() {
+func (r *responseProxy) Reset() {
 	r.headersProxy.UnsetHeader()
 	r.nativeBody = goja.Null()
 	r.resp = nil
 }
 
-func (r *resultProxy) Get(key string) goja.Value {
+func (r *responseProxy) Get(key string) goja.Value {
 	switch key {
 	case "statusText":
 		return r.vm.ToValue(r.resp.Status)
@@ -65,18 +65,18 @@ func (r *resultProxy) Get(key string) goja.Value {
 	}
 }
 
-func (r *resultProxy) Set(key string, val goja.Value) bool {
+func (r *responseProxy) Set(key string, val goja.Value) bool {
 	return false
 }
 
-func (r *resultProxy) Has(key string) bool {
+func (r *responseProxy) Has(key string) bool {
 	return !goja.IsUndefined(r.Get(key))
 }
 
-func (r *resultProxy) Delete(key string) bool {
+func (r *responseProxy) Delete(key string) bool {
 	return false
 }
 
-func (r *resultProxy) Keys() []string {
+func (r *responseProxy) Keys() []string {
 	return []string{"body", "header", "statusCode", "statusText"}
 }

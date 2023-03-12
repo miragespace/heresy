@@ -9,11 +9,10 @@ import (
 	"reflect"
 
 	"github.com/dop251/goja"
-	"go.miragespace.co/heresy/extensions/common"
 )
 
 type nativeFetchWrapper struct {
-	cfg FetcherConfig
+	cfg FetchConfig
 	ctx context.Context
 
 	_doFetch goja.Value
@@ -79,10 +78,10 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		// possibly wrapped ReadableStream
 		stream := reqBody.ToObject(vm)
 		wrapper := stream.Get("wrapper")
-		w, ok := wrapper.Export().(*common.NativeReaderWrapper)
+		w, ok := AsNativeWrapper(wrapper)
 		if !ok {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(vm.NewTypeError("Using custom ReadableStream as body is currently unsupported"))
+				reject(vm.NewGoError(ErrUnsupportedReadableStream))
 			})
 			return
 		}

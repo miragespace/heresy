@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/stream"
 
 	"github.com/alitto/pond"
@@ -15,20 +16,23 @@ import (
 
 const UserAgent = "heresy-runtime/fetcher"
 
-type Fetcher struct {
-	FetcherConfig
-	runtimeWrapper goja.Callable
-	nativeObjPool  sync.Pool
+var ErrUnsupportedReadableStream = fmt.Errorf("using custom ReadableStream as body is currently unsupported")
+
+type Fetch struct {
+	FetchConfig
+	runtimeFetchWrapper  goja.Callable
+	runtimeReponseHelper goja.Value
+	nativeObjPool        sync.Pool
 }
 
-type FetcherConfig struct {
-	Eventloop *eventloop.EventLoop
+type FetchConfig struct {
 	Stream    *stream.StreamController
+	Eventloop *eventloop.EventLoop
 	Scheduler *pond.WorkerPool
 	Client    *http.Client
 }
 
-func (c *FetcherConfig) Validate() error {
+func (c *FetchConfig) Validate() error {
 	if c.Eventloop == nil {
 		return fmt.Errorf("nil Eventloop is invalid")
 	}
@@ -44,13 +48,13 @@ func (c *FetcherConfig) Validate() error {
 	return nil
 }
 
-func NewFetcher(cfg FetcherConfig) (*Fetcher, error) {
+func NewFetch(cfg FetchConfig) (*Fetch, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	f := &Fetcher{
-		FetcherConfig: cfg,
+	f := &Fetch{
+		FetchConfig: cfg,
 	}
 
 	setup := make(chan error, 1)
@@ -67,12 +71,15 @@ func NewFetcher(cfg FetcherConfig) (*Fetcher, error) {
 			setup <- fmt.Errorf("internal error: %s is not a function", fetchWrapperSymbol)
 			return
 		}
-		f.runtimeWrapper = wrapper
+		f.runtimeFetchWrapper = wrapper
+
+		promiseResolver = vm.Get(responseHelperSymbol)
+		f.runtimeReponseHelper = promiseResolver
 
 		f.nativeObjPool = sync.Pool{
 			New: func() any {
 				fetch := &nativeFetchWrapper{
-					cfg: f.FetcherConfig,
+					cfg: f.FetchConfig,
 				}
 				fetch._doFetch = vm.ToValue(fetch.DoFetch)
 				return vm.NewDynamicObject(fetch)
@@ -89,11 +96,15 @@ func NewFetcher(cfg FetcherConfig) (*Fetcher, error) {
 	return f, nil
 }
 
-func (f *Fetcher) NewFetch(ctx context.Context) (goja.Value, error) {
+func (f *Fetch) GetResponseHelper() goja.Value {
+	return f.runtimeReponseHelper
+}
+
+func (f *Fetch) NewNativeFetch(ctx context.Context) (goja.Value, error) {
 	valCh := make(chan goja.Value, 1)
 	errCh := make(chan error, 1)
 	f.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-		s, err := f.NewFetchVM(ctx, vm)
+		s, err := f.NewNativeFetchVM(ctx, vm)
 		if err != nil {
 			errCh <- err
 		} else {
@@ -109,10 +120,18 @@ func (f *Fetcher) NewFetch(ctx context.Context) (goja.Value, error) {
 	}
 }
 
-func (f *Fetcher) NewFetchVM(ctx context.Context, vm *goja.Runtime) (goja.Value, error) {
+func (f *Fetch) NewNativeFetchVM(ctx context.Context, vm *goja.Runtime) (goja.Value, error) {
 	obj := f.nativeObjPool.Get().(*goja.Object)
 	fetch := obj.Export().(*nativeFetchWrapper)
 	fetch.ctx = ctx
 
-	return f.runtimeWrapper(goja.Undefined(), obj)
+	return f.runtimeFetchWrapper(goja.Undefined(), obj)
+}
+
+func AsNativeWrapper(wrapper goja.Value) (*common.NativeReaderWrapper, bool) {
+	if wrapper == nil {
+		return nil, false
+	}
+	w, ok := wrapper.Export().(*common.NativeReaderWrapper)
+	return w, ok
 }

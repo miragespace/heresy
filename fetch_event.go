@@ -1,37 +1,49 @@
 package heresy
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
+	"reflect"
+
+	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/fetch"
 
 	"github.com/dop251/goja"
-	"go.miragespace.co/heresy/extensions/stream"
+	"go.uber.org/zap"
 )
 
 type fetchEvent struct {
-	stream            *stream.StreamController
-	httpReq           *http.Request
-	httpResp          http.ResponseWriter
-	httpNext          http.Handler
-	requestProxy      *fetchEventRequest
-	nativeFetch       goja.Value
-	nativeResolve     goja.Value
-	nativeReject      goja.Value
-	done              chan struct{}
-	vm                *goja.Runtime
-	nativeEvt         *goja.Object
-	nativeEvtInstance *goja.Object
-	hasFetch          bool
-	skipNext          bool
+	httpReq               *http.Request
+	httpResp              http.ResponseWriter
+	httpNext              http.Handler
+	requestProxy          *fetchEventRequest
+	nativeFetch           goja.Value
+	nativeRequestResolve  goja.Value
+	nativeRequestReject   goja.Value
+	nativeResponseResolve goja.Value
+	nativeResponseReject  goja.Value
+	requestDone           chan struct{}
+	responseDone          chan struct{}
+	instance              *runtimeInstance
+	vm                    *goja.Runtime
+	nativeEvt             *goja.Object
+	nativeEvtInstance     *goja.Object
+	hasFetch              bool
+	skipNext              bool
+	useRespondWith        bool
+	responseSent          bool
 }
 
 var _ goja.DynamicObject = (*fetchEvent)(nil)
 
-func newFetchEvent(vm *goja.Runtime, controller *stream.StreamController) *fetchEvent {
+func newFetchEvent(vm *goja.Runtime, inst *runtimeInstance) *fetchEvent {
 	evt := &fetchEvent{
-		stream: controller,
-		done:   make(chan struct{}, 1),
-		vm:     vm,
+		instance:     inst,
+		requestDone:  make(chan struct{}, 1),
+		responseDone: make(chan struct{}, 1),
+		vm:           vm,
 	}
 
 	fetchEventClass := evt.vm.Get("FetchEvent")
@@ -47,8 +59,10 @@ func newFetchEvent(vm *goja.Runtime, controller *stream.StreamController) *fetch
 	}
 
 	evt.requestProxy = newFetchEventRequest(evt)
-	evt.nativeResolve = evt.getNativeEventResolver()
-	evt.nativeReject = evt.getNativeEventRejector()
+	evt.nativeRequestResolve = evt.getNativeRequestResolver()
+	evt.nativeRequestReject = evt.getNativeRequestRejector()
+	evt.nativeResponseResolve = evt.getNativeResponseResolver()
+	evt.nativeResponseReject = evt.getNativeResponseRejector()
 	evt.nativeEvt = evt.vm.NewDynamicObject(evt)
 	evt.nativeEvt.SetPrototype(evt.nativeEvtInstance.Prototype())
 
@@ -62,6 +76,8 @@ func (evt *fetchEvent) Reset() {
 	evt.nativeFetch = nil
 	evt.hasFetch = false
 	evt.skipNext = false
+	evt.useRespondWith = false
+	evt.responseSent = false
 	evt.requestProxy.Reset()
 }
 
@@ -115,8 +131,29 @@ func (evt *fetchEvent) WithFetch(f goja.Value) *fetchEvent {
 	return evt
 }
 
-func (evt *fetchEvent) nativeRespondWith(fc goja.FunctionCall) goja.Value {
+func (evt *fetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
+	resp := fc.Argument(0)
+	if goja.IsUndefined(resp) {
+		panic(vm.NewTypeError("respondWith: expecting 1 argument, got 0 argument"))
+	}
+
+	if evt.useRespondWith {
+		panic(vm.NewTypeError("respondWith: already called"))
+	}
+
 	evt.skipNext = true
+	evt.useRespondWith = true
+
+	if err := evt.instance.resolver.NewPromiseFuncWithSpreadVM(
+		vm,
+		evt.instance.fetcher.GetResponseHelper(),
+		resp,
+		evt.nativeResponseResolve,
+		evt.nativeResponseReject,
+	); err != nil {
+		panic(fmt.Errorf("runtime panic: Failed to execute spread resolver: %w", err))
+	}
+
 	return goja.Undefined()
 }
 
@@ -125,49 +162,145 @@ func (evt *fetchEvent) nativeWaitUntil(fc goja.FunctionCall) goja.Value {
 }
 
 func (evt *fetchEvent) wait() {
-	<-evt.done
+	<-evt.requestDone
 }
 
 func (evt *fetchEvent) exception(err error) {
+	if evt.responseSent {
+		return
+	}
 	select {
 	case <-evt.httpReq.Context().Done():
 	default:
 		evt.httpResp.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(evt.httpResp, "Unexpected runtime exception: %+v", err)
 	}
-	evt.done <- struct{}{}
+	evt.responseSent = true
+	evt.wake()
 }
 
-func (evt *fetchEvent) getNativeEventResolver() goja.Value {
-	return evt.nativeEventWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
-		if evt.skipNext {
-			return
+func (evt *fetchEvent) getNativeResponseResolver() goja.Value {
+	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall) {
+		// NOTE: in the nested response resolver/rejector from .respondWith, we do not .wake()
+		// to unblock the http request in progress. Resolution should be done by the outer request resolver
+
+		var (
+			respStatus                 = fc.Argument(0)
+			respHeaders                = fc.Argument(1)
+			respBody                   = fc.Argument(2)
+			bodyType                   = respBody.ExportType()
+			status      int64          = respStatus.ToInteger()
+			headers     map[string]any = respHeaders.Export().(map[string]any)
+			useBody     io.Reader      = nil
+			cleanup     func()         = func() {}
+		)
+
+		if goja.IsUndefined(respBody) || goja.IsNull(respBody) {
+			// no body
+		} else if bodyType.Kind() == reflect.String {
+			useBody = bytes.NewBufferString(respBody.String())
+		} else {
+			// possibly wrapped ReadableStream
+			stream := respBody.ToObject(evt.vm)
+			wrapper := stream.Get("wrapper")
+			w, ok := fetch.AsNativeWrapper(wrapper)
+			if !ok {
+				panic(evt.vm.NewGoError(fetch.ErrUnsupportedReadableStream))
+			}
+			useBody = w.GetReader()
+			cleanup = func() {
+				evt.instance.stream.Close(w)
+			}
 		}
-		evt.httpNext.ServeHTTP(w, r)
+
+		evt.instance.scheduler.Submit(func() {
+			defer cleanup()
+
+			for k, v := range headers {
+				w.Header().Set(k, fmt.Sprintf("%s", v))
+			}
+
+			buf := common.GetBuffer()
+			defer common.PutBuffer(buf)
+
+			w.WriteHeader(int(status))
+			_, err := io.CopyBuffer(w, useBody, buf)
+			if err != nil {
+				evt.instance.logger.Error("Error writing response", zap.Error(err))
+			}
+
+			evt.responseSent = true
+			evt.responseDone <- struct{}{}
+		})
 	})
 }
+func (evt *fetchEvent) getNativeResponseRejector() goja.Value {
+	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall) {
+		// NOTE: in the nested response resolver/rejector from .respondWith, we do not .wake()
+		// to unblock the http request in progress. Resolution should be done by the outer request resolver
 
-func (evt *fetchEvent) getNativeEventRejector() goja.Value {
-	return evt.nativeEventWrapper(func(w http.ResponseWriter, r *http.Request, v goja.Value) {
+		v := fc.Argument(0)
 		w.WriteHeader(http.StatusInternalServerError)
 		if goja.IsUndefined(v) {
 			return
 		}
 		fmt.Fprintf(w, "Execution exception: %+v", v)
+		evt.responseSent = true
+		evt.responseDone <- struct{}{}
 	})
 }
 
-func (evt *fetchEvent) nativeEventWrapper(
-	fn func(w http.ResponseWriter, r *http.Request, v goja.Value),
+func (evt *fetchEvent) getNativeRequestResolver() goja.Value {
+	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.FunctionCall) {
+		evt.instance.scheduler.Submit(func() {
+			defer evt.wake()
+
+			if evt.skipNext {
+				// .respondWith was used
+				<-evt.responseDone
+			} else {
+				// fallthrough, .respondWith did not call
+				evt.httpNext.ServeHTTP(w, r)
+			}
+			evt.responseSent = true
+		})
+	})
+}
+
+func (evt *fetchEvent) getNativeRequestRejector() goja.Value {
+	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall) {
+		v := fc.Argument(0)
+
+		evt.instance.scheduler.Submit(func() {
+			defer evt.wake()
+
+			if evt.skipNext {
+				// .respondWith was used, but exception thrown
+				<-evt.responseDone
+			}
+
+			if evt.responseSent {
+				evt.instance.logger.Warn("Script thrown exception after response was sent", zap.String("exception", v.String()))
+				return
+			}
+
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Execution exception: %+v", v)
+			evt.responseSent = true
+		})
+
+	})
+}
+
+func (evt *fetchEvent) nativeFunctionWrapper(
+	fn func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall),
 ) goja.Value {
-	return evt.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
-		select {
-		case <-evt.httpReq.Context().Done():
-		default:
-			v := fc.Argument(0)
-			fn(evt.httpResp, evt.httpReq, v)
-		}
-		evt.done <- struct{}{}
+	return evt.vm.ToValue(func(fc goja.FunctionCall) (ret goja.Value) {
+		fn(evt.httpResp, evt.httpReq, fc)
 		return goja.Undefined()
 	})
+}
+
+func (evt *fetchEvent) wake() {
+	evt.requestDone <- struct{}{}
 }
