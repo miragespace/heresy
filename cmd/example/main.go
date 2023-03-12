@@ -28,7 +28,7 @@ func main() {
 		panic(err)
 	}
 
-	rt, err := heresy.NewRuntime(logger, 2)
+	rt, err := heresy.NewRuntime(logger, 4)
 	if err != nil {
 		panic(err)
 	}

@@ -136,7 +136,7 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 
 func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
 	n := atomic.AddUint32(&rt.nextShard, 1)
-	instance := rt.shards[(int(n)-1)%rt.numShards].Load()
+	instance := rt.shards[int(n)%rt.numShards].Load()
 
 	fn(instance)
 }
