@@ -1,6 +1,7 @@
 # 😅 Heresy
 
 [![GoDoc](https://godoc.org/go.miragespace.co/heresy?status.svg)](https://pkg.go.dev/go.miragespace.co/heresy)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy?ref=badge_shield)
 
 ## What is it?
 
@@ -82,3 +83,6 @@ registerMiddlewareHandler(httpHandler, {
 ```
 
 ## TODO: Complete this README
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy?ref=badge_large)
