@@ -24,10 +24,11 @@ Heresy is a runtime to allow you to run JavaScript as middleware for `http.Serve
 | Web Streams API (`ReadableStream`, etc), backed by `io.Reader`/`io.Writer` |
 | Fetch API (`Headers`, `Request`, `Response`)                               |
 
-| **Style**  | Status | req/request                                                                                 | resp/respondWith                                                                                        | next       |
-|------------|--------|---------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|------------|
-| Express.js | WIP    | Partial implementations <br> (`"ip", "method", "path", "protocol", "secure", "get", "res"`) | Partial implementations <br> (`"status", "send", "json", "get", "end", "set", "header", "headersSent"`) | Works      |
-| FetchEvent | WIP    | With native `ReadableStream` support backed by `io.Reader`                                  | WIP                                                                                                     | Bypass WIP |
+| **Component** | Status               | req/request                                                     | resp/respondWith                                                 | next  |
+|---------------|----------------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
+| Express.js    | WIP                  | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
+| FetchEvent    | Missing `.waitUntil` | Works                                                           | Works                                                            | Works |
+| Fetch API     | Implemented          |                                                                 |                                                                  |       |
 
 
 ## Examples
@@ -54,7 +55,11 @@ async function eventHandler(evt) {
     const { request, respondWith } = evt
     if (request.method === "POST") {
         const json = await request.json()
-        respondWith(new Response(JSON.stringify(json)))
+        respondWith(new Response(JSON.stringify(json), {
+            headers: {
+                'content-type': 'application/json'
+            }
+        }))
     }
     // to the next handler in http.Server
 }
