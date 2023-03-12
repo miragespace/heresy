@@ -15,6 +15,13 @@ async function eventHandler(evt) {
             })
         )
     }
+
+    if (evt.request.url.includes("echo")) {
+        evt.respondWith(new Response(evt.request.body, {
+            headers: evt.request.headers,
+        }))
+    }
+
     // evt.respondWith(new Response(new ReadableStream()))
 }
 

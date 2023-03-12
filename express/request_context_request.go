@@ -1,4 +1,4 @@
-package heresy
+package express
 
 import (
 	"fmt"
@@ -8,15 +8,15 @@ import (
 )
 
 type contextRequest struct {
-	*requestContext
+	*RequestContext
 	nativeReq *goja.Object
 }
 
 var _ goja.DynamicObject = (*contextRequest)(nil)
 
-func newContextRequest(ctx *requestContext) *contextRequest {
+func newContextRequest(ctx *RequestContext) *contextRequest {
 	req := &contextRequest{
-		requestContext: ctx,
+		RequestContext: ctx,
 	}
 	req.nativeReq = ctx.vm.NewDynamicObject(req)
 	return req

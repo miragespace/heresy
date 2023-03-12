@@ -1,4 +1,4 @@
-package heresy
+package express
 
 import (
 	"fmt"
@@ -10,18 +10,18 @@ import (
 )
 
 type contextResponse struct {
-	*requestContext
+	*RequestContext
 	nativeRes  *goja.Object
 	statusCode int
 }
 
 var _ goja.DynamicObject = (*contextResponse)(nil)
 
-func newContextResponse(ctx *requestContext) *contextResponse {
+func newContextResponse(ctx *RequestContext) *contextResponse {
 	res := &contextResponse{
-		requestContext: ctx,
+		RequestContext: ctx,
 	}
-	res.Reset()
+	res.reset()
 	res.nativeRes = ctx.vm.NewDynamicObject(res)
 	return res
 }
@@ -67,7 +67,7 @@ func (res *contextResponse) Keys() []string {
 	return []string{"headersSent"}
 }
 
-func (res *contextResponse) Reset() {
+func (res *contextResponse) reset() {
 	res.statusCode = http.StatusNoContent
 	res.statusSet = false
 }

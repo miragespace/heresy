@@ -57,14 +57,14 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 
 	if err := inst.resolver.NewPromiseFuncWithArg(
 		middlewareHandler,
-		ctx.nativeCtx,
-		ctx.nativeResolve,
-		ctx.nativeReject,
+		ctx.NativeObject(),
+		ctx.Resolve(),
+		ctx.Reject(),
 	); err != nil {
-		ctx.exception(err)
+		ctx.Exception(err)
 	}
 
-	ctx.wait()
+	ctx.Wait()
 }
 
 func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -86,12 +86,12 @@ func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Reques
 
 	if err := inst.resolver.NewPromiseFuncWithArg(
 		middlewareHandler,
-		evt.nativeEvt,
-		evt.nativeRequestResolve,
-		evt.nativeRequestReject,
+		evt.NativeObject(),
+		evt.Resolve(),
+		evt.Reject(),
 	); err != nil {
-		evt.exception(err)
+		evt.Exception(err)
 	}
 
-	evt.wait()
+	evt.Wait()
 }

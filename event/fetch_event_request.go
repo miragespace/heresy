@@ -1,15 +1,16 @@
-package heresy
+package event
 
 import (
 	"fmt"
 	"net/http"
 
-	"github.com/dop251/goja"
 	"go.miragespace.co/heresy/extensions/common"
+
+	"github.com/dop251/goja"
 )
 
 type fetchEventRequest struct {
-	*fetchEvent
+	*FetchEvent
 	headersProxy          *common.HeadersProxy
 	nativeBody            goja.Value
 	nativeReq             *goja.Object
@@ -19,9 +20,9 @@ type fetchEventRequest struct {
 
 var _ goja.DynamicObject = (*fetchEventRequest)(nil)
 
-func newFetchEventRequest(evt *fetchEvent) *fetchEventRequest {
+func newFetchEventRequest(evt *FetchEvent) *fetchEventRequest {
 	req := &fetchEventRequest{
-		fetchEvent:   evt,
+		FetchEvent:   evt,
 		nativeBody:   goja.Null(),
 		bodyConsumed: false,
 	}
@@ -49,7 +50,7 @@ func (req *fetchEventRequest) initialize() {
 	switch req.httpReq.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		nativeBody, err := req.instance.stream.NewReadableStream(req.httpReq.Body)
+		nativeBody, err := req.deps.Stream.NewReadableStream(req.httpReq.Body)
 		if err != nil {
 			panic(fmt.Errorf("runtime panic: Failed to convert httpReq.Body into native ReadableStream: %w", err))
 		}
@@ -58,7 +59,7 @@ func (req *fetchEventRequest) initialize() {
 	req.headersProxy.UseHeader(req.httpReq.Header)
 }
 
-func (req *fetchEventRequest) Reset() {
+func (req *fetchEventRequest) reset() {
 	req.headersProxy.UnsetHeader()
 	req.nativeBody = goja.Null()
 	req.bodyConsumed = false

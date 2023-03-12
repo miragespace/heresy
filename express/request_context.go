@@ -1,4 +1,4 @@
-package heresy
+package express
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-type requestContext struct {
+type RequestContext struct {
 	httpReq       *http.Request
 	httpResp      http.ResponseWriter
 	httpNext      http.Handler
@@ -26,10 +26,10 @@ type requestContext struct {
 	statusSet bool
 }
 
-var _ goja.DynamicObject = (*requestContext)(nil)
+var _ goja.DynamicObject = (*RequestContext)(nil)
 
-func newRequestContext(vm *goja.Runtime) *requestContext {
-	ctx := &requestContext{
+func newRequestContext(vm *goja.Runtime) *RequestContext {
+	ctx := &RequestContext{
 		requestDone: make(chan struct{}, 1),
 		vm:          vm,
 	}
@@ -42,7 +42,7 @@ func newRequestContext(vm *goja.Runtime) *requestContext {
 	return ctx
 }
 
-func (ctx *requestContext) Reset() {
+func (ctx *RequestContext) reset() {
 	ctx.httpReq = nil
 	ctx.httpResp = nil
 	ctx.httpNext = nil
@@ -50,10 +50,10 @@ func (ctx *requestContext) Reset() {
 	ctx.hasFetch = false
 	ctx.nextInvoked = false
 	ctx.responseSent = false
-	ctx.responseProxy.Reset()
+	ctx.responseProxy.reset()
 }
 
-func (ctx *requestContext) Get(key string) goja.Value {
+func (ctx *RequestContext) Get(key string) goja.Value {
 	switch key {
 	case "res":
 		return ctx.responseProxy.nativeRes
@@ -71,19 +71,19 @@ func (ctx *requestContext) Get(key string) goja.Value {
 	}
 }
 
-func (ctx *requestContext) Set(_ string, _ goja.Value) bool {
+func (ctx *RequestContext) Set(_ string, _ goja.Value) bool {
 	return false
 }
 
-func (ctx *requestContext) Has(key string) bool {
+func (ctx *RequestContext) Has(key string) bool {
 	return !goja.IsUndefined(ctx.Get(key))
 }
 
-func (ctx *requestContext) Delete(key string) bool {
+func (ctx *RequestContext) Delete(key string) bool {
 	return false
 }
 
-func (ctx *requestContext) Keys() []string {
+func (ctx *RequestContext) Keys() []string {
 	if ctx.hasFetch {
 		return []string{"fetch", "next", "req", "res"}
 	} else {
@@ -91,7 +91,7 @@ func (ctx *requestContext) Keys() []string {
 	}
 }
 
-func (ctx *requestContext) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *requestContext {
+func (ctx *RequestContext) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *RequestContext {
 	ctx.httpResp = w
 	ctx.httpReq = r
 	ctx.httpNext = next
@@ -99,13 +99,13 @@ func (ctx *requestContext) WithHttp(w http.ResponseWriter, r *http.Request, next
 	return ctx
 }
 
-func (ctx *requestContext) WithFetch(f goja.Value) *requestContext {
+func (ctx *RequestContext) WithFetch(f goja.Value) *RequestContext {
 	ctx.hasFetch = true
 	ctx.nativeFetch = f
 	return ctx
 }
 
-func (ctx *requestContext) nativeNext(fc goja.FunctionCall) goja.Value {
+func (ctx *RequestContext) nativeNext(fc goja.FunctionCall) goja.Value {
 	if ctx.nextInvoked {
 		return goja.Undefined()
 	}
@@ -116,11 +116,23 @@ func (ctx *requestContext) nativeNext(fc goja.FunctionCall) goja.Value {
 	return goja.Undefined()
 }
 
-func (ctx *requestContext) wait() {
+func (ctx *RequestContext) Wait() {
 	<-ctx.requestDone
 }
 
-func (ctx *requestContext) exception(err error) {
+func (ctx *RequestContext) NativeObject() goja.Value {
+	return ctx.nativeCtx
+}
+
+func (ctx *RequestContext) Resolve() goja.Value {
+	return ctx.nativeResolve
+}
+
+func (ctx *RequestContext) Reject() goja.Value {
+	return ctx.nativeReject
+}
+
+func (ctx *RequestContext) Exception(err error) {
 	select {
 	case <-ctx.httpReq.Context().Done():
 	default:
@@ -131,7 +143,7 @@ func (ctx *requestContext) exception(err error) {
 	ctx.wake()
 }
 
-func (ctx *requestContext) getNativeContextResolver() goja.Value {
+func (ctx *RequestContext) getNativeContextResolver() goja.Value {
 	return ctx.nativeContextWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
 		if ctx.statusSet || ctx.responseSent {
 			return
@@ -140,7 +152,7 @@ func (ctx *requestContext) getNativeContextResolver() goja.Value {
 	})
 }
 
-func (ctx *requestContext) getNativeContextRejector() goja.Value {
+func (ctx *RequestContext) getNativeContextRejector() goja.Value {
 	return ctx.nativeContextWrapper(func(w http.ResponseWriter, r *http.Request, v goja.Value) {
 		w.WriteHeader(http.StatusInternalServerError)
 		if goja.IsUndefined(v) {
@@ -150,7 +162,7 @@ func (ctx *requestContext) getNativeContextRejector() goja.Value {
 	})
 }
 
-func (ctx *requestContext) nativeContextWrapper(
+func (ctx *RequestContext) nativeContextWrapper(
 	fn func(w http.ResponseWriter, r *http.Request, v goja.Value),
 ) goja.Value {
 	return ctx.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
@@ -170,6 +182,6 @@ func (ctx *requestContext) nativeContextWrapper(
 	})
 }
 
-func (ctx *requestContext) wake() {
+func (ctx *RequestContext) wake() {
 	ctx.requestDone <- struct{}{}
 }

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.miragespace.co/heresy/event"
+	"go.miragespace.co/heresy/express"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
@@ -45,8 +47,8 @@ type runtimeInstance struct {
 	middlewareHandler atomic.Value                         // goja.Value
 	middlewareType    atomic.Value                         // handlerType
 	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
-	contextPool       *requestContextPool
-	eventPool         *fetchEventPool
+	contextPool       *express.RequestContextPool
+	eventPool         *event.FetchEventPool
 	eventLoop         *eventloop.EventLoop
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
@@ -166,11 +168,6 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	instance.handlerOption.Store(&options)
 	instance.middlewareType.Store(handlerTypeUnset)
 
-	err = <-instance.prepareInstance()
-	if err != nil {
-		return
-	}
-
 	err = polyfill.PolyfillRuntime(eventLoop)
 	if err != nil {
 		return
@@ -197,6 +194,8 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	if err != nil {
 		return
 	}
+
+	err = <-instance.prepareInstance(rt.logger, rt.scheduler)
 
 	return
 }
@@ -228,7 +227,7 @@ func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
 	}
 }
 
-func (inst *runtimeInstance) prepareInstance() (setup chan error) {
+func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, scheduler *pond.WorkerPool) (setup chan error) {
 	setup = make(chan error, 1)
 
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
@@ -266,8 +265,15 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 			return
 		})
 
-		inst.contextPool = newRequestContextPool(inst)
-		inst.eventPool = newFetchEventPool(inst)
+		inst.contextPool = express.NewRequestContextPool(inst.eventLoop)
+		inst.eventPool = event.NewFetchEventPool(event.FetchEventDeps{
+			Logger:    logger,
+			Eventloop: inst.eventLoop,
+			Stream:    inst.stream,
+			Resolver:  inst.resolver,
+			Fetch:     inst.fetcher,
+			Scheduler: scheduler,
+		})
 		inst.vm = vm // reference is kept for .Interrupt
 
 		setup <- nil
