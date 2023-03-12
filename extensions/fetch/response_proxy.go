@@ -21,7 +21,7 @@ type responseProxy struct {
 
 var _ goja.DynamicObject = (*responseProxy)(nil)
 
-func newResultProxy(vm *goja.Runtime, controller *stream.StreamController) *responseProxy {
+func newResponseProxy(vm *goja.Runtime, controller *stream.StreamController) *responseProxy {
 	r := &responseProxy{
 		vm:           vm,
 		stream:       controller,

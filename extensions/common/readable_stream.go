@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 
-	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
@@ -14,7 +13,6 @@ const BufferSize = 16 * 1024
 type NativeReaderWrapper struct {
 	reader    io.ReadCloser
 	eventLoop *eventloop.EventLoop
-	scheduler *pond.WorkerPool
 	nativeObj *goja.Object
 	vm        *goja.Runtime
 
@@ -27,10 +25,9 @@ var keys = []string{"bufferSize"}
 
 var _ goja.DynamicObject = (*NativeReaderWrapper)(nil)
 
-func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) *NativeReaderWrapper {
+func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop) *NativeReaderWrapper {
 	s := &NativeReaderWrapper{
 		eventLoop: eventLoop,
-		scheduler: scheduler,
 		vm:        vm,
 	}
 	s.nativeObj = vm.NewDynamicObject(s)
@@ -104,7 +101,7 @@ func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 	)
 
 	buf := buffer.Bytes()[offset:length]
-	s.scheduler.Submit(func() {
+	go func() {
 		n, err := s.reader.Read(buf)
 		if err != nil && !errors.Is(err, io.EOF) {
 			s.reader.Close()
@@ -116,7 +113,7 @@ func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 				resolve(n)
 			})
 		}
-	})
+	}()
 
 	return
 }

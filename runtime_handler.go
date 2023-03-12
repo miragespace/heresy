@@ -53,6 +53,7 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
 		}
 		ctx.WithFetch(fetcher)
+		defer inst.fetcher.DoneWith(fetcher)
 	}
 
 	if err := inst.resolver.NewPromiseFuncWithArg(
@@ -82,6 +83,7 @@ func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Reques
 			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
 		}
 		evt.WithFetch(fetcher)
+		defer inst.fetcher.DoneWith(fetcher)
 	}
 
 	if err := inst.resolver.NewPromiseFuncWithArg(

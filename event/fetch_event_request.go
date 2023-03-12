@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 )
@@ -28,17 +29,11 @@ func newFetchEventRequest(evt *FetchEvent) *fetchEventRequest {
 	}
 	req.headersProxy = common.NewHeadersProxy(evt.vm)
 
-	requestClass := req.vm.Get("Request")
-	requestConstructor, ok := goja.AssertConstructor(requestClass)
-	if !ok {
-		panic("runtime panic: Request is not a constructor, please check if polyfill is enabled")
+	reqeustInstance := evt.vm.Get(polyfill.RuntimeRequestInstanceSymbol)
+	if goja.IsUndefined(reqeustInstance) {
+		panic("runtime panic: Polyfill symbols not found, please check if polyfill is enabled")
 	}
-
-	var err error
-	req.nativeRequestInstance, err = requestConstructor(nil)
-	if err != nil {
-		panic(fmt.Errorf("runtime panic: (new Request) constructor call returned an error: %w", err))
-	}
+	req.nativeRequestInstance = reqeustInstance.ToObject(evt.vm)
 
 	req.nativeReq = evt.vm.NewDynamicObject(req)
 	req.nativeReq.SetPrototype(req.nativeRequestInstance.Prototype())

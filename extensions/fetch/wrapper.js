@@ -1,6 +1,6 @@
 "use strict";
 const __runtimeFetch = (goWrapper) => {
-    return async (input, options) => {
+    const fn = async (input, options) => {
         const request = new Request(input, options);
         const rawHeadersMap = {};
         request.headers.forEach((v, k) => {
@@ -15,12 +15,17 @@ const __runtimeFetch = (goWrapper) => {
             useBody = await requestBody.text();
         }
         const { statusText, statusCode, header, body } = await goWrapper.doFetch(request.url, request.method, rawHeadersMap, useBody);
+        goWrapper.unsetCtx();
         return new Response(body, {
             status: statusCode,
             statusText: statusText,
             headers: header,
         });
     };
+    // save the reference of NativeFetchWrapper,
+    // needed for Fetch reuse
+    fn.wrapper = goWrapper;
+    return fn;
 };
 // this is a helper for FetchEvent.respondWith
 const __runtimeResponseHelper = async (response) => {

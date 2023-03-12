@@ -16,7 +16,6 @@ import (
 	"go.miragespace.co/heresy/extensions/zap_console"
 	"go.miragespace.co/heresy/polyfill"
 
-	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/dop251/goja_nodejs/require"
@@ -26,7 +25,6 @@ import (
 
 type Runtime struct {
 	logger    *zap.Logger
-	scheduler *pond.WorkerPool
 	shards    []atomic.Pointer[runtimeInstance]
 	nextShard uint32
 	numShards int
@@ -53,7 +51,6 @@ type runtimeInstance struct {
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
 	fetcher           *fetch.Fetch
-	scheduler         *pond.WorkerPool
 	vm                *goja.Runtime
 }
 
@@ -70,7 +67,6 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 
 	rt := &Runtime{
 		logger:    logger,
-		scheduler: pond.New(100, 200),
 		shards:    make([]atomic.Pointer[runtimeInstance], shards),
 		numShards: shards,
 	}
@@ -161,7 +157,6 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	instance = &runtimeInstance{
 		logger:    rt.logger,
 		eventLoop: eventLoop,
-		scheduler: rt.scheduler,
 	}
 
 	var options nativeHandlerOptions
@@ -178,7 +173,7 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		return
 	}
 
-	instance.stream, err = stream.NewController(eventLoop, rt.scheduler)
+	instance.stream, err = stream.NewController(eventLoop)
 	if err != nil {
 		return
 	}
@@ -186,7 +181,6 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	instance.fetcher, err = fetch.NewFetch(fetch.FetchConfig{
 		Eventloop: eventLoop,
 		Stream:    instance.stream,
-		Scheduler: rt.scheduler,
 		Client: &http.Client{
 			Timeout: time.Second * 10,
 		},
@@ -195,7 +189,7 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		return
 	}
 
-	err = <-instance.prepareInstance(rt.logger, rt.scheduler)
+	err = <-instance.prepareInstance(rt.logger)
 
 	return
 }
@@ -207,7 +201,6 @@ func (rt *Runtime) Stop(interrupt bool) {
 			old.stop(interrupt)
 		}
 	}
-	rt.scheduler.Stop()
 }
 
 func (inst *runtimeInstance) stop(interrupt bool) {
@@ -227,7 +220,7 @@ func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
 	}
 }
 
-func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, scheduler *pond.WorkerPool) (setup chan error) {
+func (inst *runtimeInstance) prepareInstance(logger *zap.Logger) (setup chan error) {
 	setup = make(chan error, 1)
 
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
@@ -272,7 +265,6 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, scheduler *pond
 			Stream:    inst.stream,
 			Resolver:  inst.resolver,
 			Fetch:     inst.fetcher,
-			Scheduler: scheduler,
 		})
 		inst.vm = vm // reference is kept for .Interrupt
 

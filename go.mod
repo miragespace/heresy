@@ -3,7 +3,6 @@ module go.miragespace.co/heresy
 go 1.20
 
 require (
-	github.com/alitto/pond v1.8.3
 	github.com/clarkmcc/go-typescript v0.6.1-0.20230128012413-d346b08416e4
 	github.com/dop251/goja v0.0.0-20230304130813-e2f543bf4b4c
 	github.com/dop251/goja_nodejs v0.0.0-20230226152057-060fa99b809f

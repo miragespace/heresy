@@ -7,6 +7,11 @@ import (
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
+const (
+	RuntimeFetchEventInstanceSymbol = "__runtimeFetchEventInstance"
+	RuntimeRequestInstanceSymbol    = "__runtimeRequestInstance"
+)
+
 //go:embed node_modules/*
 var PolyfillFS embed.FS
 

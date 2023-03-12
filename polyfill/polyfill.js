@@ -10,3 +10,6 @@ require('text-encoding/FastestTextDecoderPolyfill.es6.min.js')
 
 // polyfill Fetch API types (Headers, Request, Response)
 require('react-native-fetch/polyfill.es6.min.js')
+
+const __runtimeFetchEventInstance = new FetchEvent()
+const __runtimeRequestInstance = new Request()

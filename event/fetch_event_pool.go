@@ -7,7 +7,6 @@ import (
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
 
-	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 	"go.uber.org/zap"
@@ -19,7 +18,6 @@ type FetchEventDeps struct {
 	Stream    *stream.StreamController
 	Resolver  *promise.PromiseResolver
 	Fetch     *fetch.Fetch
-	Scheduler *pond.WorkerPool
 }
 
 type FetchEventPool struct {

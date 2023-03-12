@@ -7,7 +7,6 @@ import (
 
 	"go.miragespace.co/heresy/extensions/common"
 
-	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
@@ -19,7 +18,7 @@ type StreamController struct {
 	vm             *goja.Runtime
 }
 
-func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (*StreamController, error) {
+func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 	t := &StreamController{
 		eventLoop: eventLoop,
 	}
@@ -43,7 +42,7 @@ func NewController(eventLoop *eventloop.EventLoop, scheduler *pond.WorkerPool) (
 
 		t.nativeObjPool = sync.Pool{
 			New: func() any {
-				w := common.NewNativeReaderWrapper(vm, eventLoop, scheduler)
+				w := common.NewNativeReaderWrapper(vm, eventLoop)
 				w.OverwriteClose(vm.ToValue(t.closeReader))
 				return w
 			},

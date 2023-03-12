@@ -9,6 +9,7 @@ import (
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 	"go.uber.org/zap"
@@ -46,17 +47,11 @@ func newFetchEvent(vm *goja.Runtime, deps FetchEventDeps) *FetchEvent {
 		vm:           vm,
 	}
 
-	fetchEventClass := evt.vm.Get("FetchEvent")
-	fetchEventConstructor, ok := goja.AssertConstructor(fetchEventClass)
-	if !ok {
-		panic("runtime panic: FetchEvent is not a constructor, please check if polyfill is enabled")
+	fetchEventInstance := evt.vm.Get(polyfill.RuntimeFetchEventInstanceSymbol)
+	if goja.IsUndefined(fetchEventInstance) {
+		panic("runtime panic: Polyfill symbols not found, please check if polyfill is enabled")
 	}
-
-	var err error
-	evt.nativeEvtInstance, err = fetchEventConstructor(nil)
-	if err != nil {
-		panic(fmt.Errorf("runtime panic: (new FetchEvent) constructor call returned an error: %w", err))
-	}
+	evt.nativeEvtInstance = fetchEventInstance.ToObject(vm)
 
 	evt.requestProxy = newFetchEventRequest(evt)
 	evt.nativeRequestResolve = evt.getNativeRequestResolver()
@@ -226,7 +221,7 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			}
 		}
 
-		evt.deps.Scheduler.Submit(func() {
+		go func() {
 			defer cleanup()
 
 			for k, v := range headers {
@@ -244,7 +239,7 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 
 			evt.responseSent = true
 			evt.responseDone <- struct{}{}
-		})
+		}()
 	})
 }
 func (evt *FetchEvent) getNativeResponseRejector() goja.Value {
@@ -265,7 +260,7 @@ func (evt *FetchEvent) getNativeResponseRejector() goja.Value {
 
 func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.FunctionCall) {
-		evt.deps.Scheduler.Submit(func() {
+		go func() {
 			defer evt.wake()
 
 			if evt.skipNext {
@@ -276,7 +271,7 @@ func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 				evt.httpNext.ServeHTTP(w, r)
 			}
 			evt.responseSent = true
-		})
+		}()
 	})
 }
 
@@ -284,7 +279,7 @@ func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall) {
 		v := fc.Argument(0)
 
-		evt.deps.Scheduler.Submit(func() {
+		go func() {
 			defer evt.wake()
 
 			if evt.skipNext {
@@ -300,8 +295,7 @@ func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Execution exception: %+v", v)
 			evt.responseSent = true
-		})
-
+		}()
 	})
 }
 

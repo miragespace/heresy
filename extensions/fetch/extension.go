@@ -9,7 +9,6 @@ import (
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/stream"
 
-	"github.com/alitto/pond"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
@@ -28,7 +27,6 @@ type Fetch struct {
 type FetchConfig struct {
 	Stream    *stream.StreamController
 	Eventloop *eventloop.EventLoop
-	Scheduler *pond.WorkerPool
 	Client    *http.Client
 }
 
@@ -38,9 +36,6 @@ func (c *FetchConfig) Validate() error {
 	}
 	if c.Stream == nil {
 		return fmt.Errorf("nil StreamController is invalid")
-	}
-	if c.Scheduler == nil {
-		return fmt.Errorf("nil Scheduler is invalid")
 	}
 	if c.Client == nil {
 		return fmt.Errorf("nil http.Client is invalid")
@@ -78,11 +73,14 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 
 		f.nativeObjPool = sync.Pool{
 			New: func() any {
-				fetch := &nativeFetchWrapper{
+				w := &nativeFetchWrapper{
 					cfg: f.FetchConfig,
 				}
-				fetch._doFetch = vm.ToValue(fetch.DoFetch)
-				return vm.NewDynamicObject(fetch)
+				w._doFetch = vm.ToValue(w.DoFetch)
+				w._unsetCtx = vm.ToValue(w.UnsetCtx)
+				obj := vm.NewDynamicObject(w)
+				fn, _ := f.runtimeFetchWrapper(goja.Undefined(), obj)
+				return fn
 			},
 		}
 
@@ -98,6 +96,13 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 
 func (f *Fetch) GetResponseHelper() goja.Value {
 	return f.runtimeReponseHelper
+}
+
+func (f *Fetch) DoneWith(native goja.Value) {
+	if _, ok := goja.AssertFunction(native); !ok {
+		return
+	}
+	f.nativeObjPool.Put(native)
 }
 
 func (f *Fetch) NewNativeFetch(ctx context.Context) (goja.Value, error) {
@@ -121,11 +126,11 @@ func (f *Fetch) NewNativeFetch(ctx context.Context) (goja.Value, error) {
 }
 
 func (f *Fetch) NewNativeFetchVM(ctx context.Context, vm *goja.Runtime) (goja.Value, error) {
-	obj := f.nativeObjPool.Get().(*goja.Object)
-	fetch := obj.Export().(*nativeFetchWrapper)
-	fetch.ctx = ctx
+	fn := f.nativeObjPool.Get().(*goja.Object)
+	w := fn.Get("wrapper").Export().(*nativeFetchWrapper)
+	w.WithContext(ctx)
 
-	return f.runtimeFetchWrapper(goja.Undefined(), obj)
+	return fn, nil
 }
 
 func AsNativeWrapper(wrapper goja.Value) (*common.NativeReaderWrapper, bool) {

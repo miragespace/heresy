@@ -15,7 +15,8 @@ type nativeFetchWrapper struct {
 	cfg FetchConfig
 	ctx context.Context
 
-	_doFetch goja.Value
+	_doFetch  goja.Value
+	_unsetCtx goja.Value
 }
 
 var _ goja.DynamicObject = (*nativeFetchWrapper)(nil)
@@ -32,6 +33,8 @@ func (f *nativeFetchWrapper) Get(key string) goja.Value {
 	switch key {
 	case "doFetch":
 		return f._doFetch
+	case "unsetCtx":
+		return f._unsetCtx
 	default:
 		return goja.Undefined()
 	}
@@ -53,6 +56,10 @@ func (f *nativeFetchWrapper) Keys() []string {
 	return []string{}
 }
 
+func (f *nativeFetchWrapper) UnsetCtx() {
+	f.ctx = nil
+}
+
 func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	promise, resolve, reject := vm.NewPromise()
 	ret = vm.ToValue(promise)
@@ -62,6 +69,7 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		reqMethod                 = fc.Argument(1)
 		reqHeaders                = fc.Argument(2)
 		reqBody                   = fc.Argument(3)
+		result                    = newResponseProxy(vm, f.cfg.Stream)
 		bodyType                  = reqBody.ExportType()
 		url        string         = reqURL.String()
 		method     string         = reqMethod.String()
@@ -91,7 +99,7 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		}
 	}
 
-	f.cfg.Scheduler.Submit(func() {
+	go func() {
 		defer cleanup()
 
 		req, err := http.NewRequestWithContext(f.ctx, method, url, useBody)
@@ -114,12 +122,11 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 			})
 		} else {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				result := newResultProxy(vm, f.cfg.Stream)
 				result.WithResponse(vm, resp)
 				resolve(result.nativeObj)
 			})
 		}
-	})
+	}()
 
 	return
 }
