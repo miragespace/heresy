@@ -1,10 +1,10 @@
 async function eventHandler(evt) {
-    const { fetch, request } = evt
-    const resp = await fetch(new Request("https://eni4mgzd1a5em.x.pipedream.net", {
+    const { fetch, request, respondWith } = evt
+    const resp = await fetch(new Request("http://127.0.0.1:8000", {
         method: "POST",
         body: request.body,
     }))
-    console.log(await resp.text())
+    respondWith(new Response(resp.body))
 }
 
 registerEventHandler(eventHandler, {

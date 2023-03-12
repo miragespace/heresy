@@ -14,12 +14,20 @@ import (
 type StreamController struct {
 	eventLoop      *eventloop.EventLoop
 	runtimeWrapper goja.Callable
-	nativeObjPool  sync.Pool
-	vm             *goja.Runtime
+	streamPool     sync.Pool
+}
+
+type ReadableStream struct {
+	nativeWrapper *common.NativeReaderWrapper
+	nativeStream  goja.Value
+}
+
+func (r *ReadableStream) NativeStream() goja.Value {
+	return r.nativeStream
 }
 
 func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
-	t := &StreamController{
+	s := &StreamController{
 		eventLoop: eventLoop,
 	}
 
@@ -37,14 +45,20 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 			setup <- fmt.Errorf("internal error: %s is not a function", streamWrapperSymbol)
 			return
 		}
-		t.runtimeWrapper = wrapper
-		t.vm = vm
+		s.runtimeWrapper = wrapper
 
-		t.nativeObjPool = sync.Pool{
+		s.streamPool = sync.Pool{
 			New: func() any {
-				w := common.NewNativeReaderWrapper(vm, eventLoop)
-				w.OverwriteClose(vm.ToValue(t.closeReader))
-				return w
+				wrapper := common.NewNativeReaderWrapper(vm, s.eventLoop)
+				fn, err := s.runtimeWrapper(goja.Undefined(), wrapper.NativeObject())
+				if err != nil {
+					panic(fmt.Errorf("runtime panic: Failed to get native ReadableStream: %w", err))
+				}
+
+				return &ReadableStream{
+					nativeWrapper: wrapper,
+					nativeStream:  fn,
+				}
 			},
 		}
 
@@ -56,50 +70,28 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 		return nil, err
 	}
 
-	return t, nil
+	return s, nil
 }
 
-// called if .close() is called from JavaScript
-func (s *StreamController) closeReader(fc goja.FunctionCall) goja.Value {
-	w := fc.Argument(0).Export().(*common.NativeReaderWrapper)
-	s.Close(w)
-	return goja.Undefined()
-}
+// func (s *StreamController) NewReadableStream(t *common.IOContext, r io.ReadCloser) *ReadableStream {
+// 	valCh := make(chan *ReadableStream, 1)
+// 	s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+// 		s := s.NewReadableStreamVM(t, r, vm)
+// 		valCh <- s
+// 	})
 
-// called if external module took control of the io.Reader,
-// such as Fetcher
-func (s *StreamController) Close(w *common.NativeReaderWrapper) {
-	if !w.SameRuntime(s.vm) {
-		return
-	}
-	w.Close()
-	w.WithReader(nil)
-	s.nativeObjPool.Put(w)
-}
+// 	return <-valCh
+// }
 
-func (s *StreamController) NewReadableStream(r io.ReadCloser) (goja.Value, error) {
-	valCh := make(chan goja.Value, 1)
-	errCh := make(chan error, 1)
-	s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-		s, err := s.NewReadableStreamVM(r, vm)
-		if err != nil {
-			errCh <- err
-		} else {
-			valCh <- s
-		}
+func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadCloser, vm *goja.Runtime) *ReadableStream {
+	stream := s.streamPool.Get().(*ReadableStream)
+	stream.nativeWrapper.WithReader(r)
+	t.TrackReader(stream.nativeWrapper)
+
+	t.RegisterCleanup(func() {
+		stream.nativeWrapper.WithReader(nil)
+		s.streamPool.Put(stream)
 	})
 
-	select {
-	case err := <-errCh:
-		return nil, err
-	case v := <-valCh:
-		return v, nil
-	}
-}
-
-func (s *StreamController) NewReadableStreamVM(r io.ReadCloser, vm *goja.Runtime) (goja.Value, error) {
-	w := s.nativeObjPool.Get().(*common.NativeReaderWrapper)
-	w.WithReader(r)
-
-	return s.runtimeWrapper(goja.Undefined(), w.NativeObject())
+	return stream
 }

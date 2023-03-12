@@ -1,66 +1,28 @@
 package fetch
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"reflect"
 
+	"go.miragespace.co/heresy/extensions/common"
+
 	"github.com/dop251/goja"
+	pool "github.com/libp2p/go-buffer-pool"
 )
 
-type nativeFetchWrapper struct {
-	cfg FetchConfig
-	ctx context.Context
-
-	_doFetch  goja.Value
-	_unsetCtx goja.Value
+type NativeFetchWrapper struct {
+	cfg       FetchConfig
+	ioContext *common.IOContext
+	respPool  *responseProxyPool
 }
 
-var _ goja.DynamicObject = (*nativeFetchWrapper)(nil)
-
-func (f *nativeFetchWrapper) WithContext(ctx context.Context) {
-	f.ctx = ctx
+func (f *NativeFetchWrapper) WithIOContext(t *common.IOContext) {
+	f.ioContext = t
 }
 
-func (f *nativeFetchWrapper) Reset() {
-	f.ctx = nil
-}
-
-func (f *nativeFetchWrapper) Get(key string) goja.Value {
-	switch key {
-	case "doFetch":
-		return f._doFetch
-	case "unsetCtx":
-		return f._unsetCtx
-	default:
-		return goja.Undefined()
-	}
-}
-
-func (f *nativeFetchWrapper) Set(key string, val goja.Value) bool {
-	return false
-}
-
-func (f *nativeFetchWrapper) Has(key string) bool {
-	return false
-}
-
-func (f *nativeFetchWrapper) Delete(key string) bool {
-	return false
-}
-
-func (f *nativeFetchWrapper) Keys() []string {
-	return []string{}
-}
-
-func (f *nativeFetchWrapper) UnsetCtx() {
-	f.ctx = nil
-}
-
-func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	promise, resolve, reject := vm.NewPromise()
 	ret = vm.ToValue(promise)
 
@@ -69,40 +31,46 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		reqMethod                 = fc.Argument(1)
 		reqHeaders                = fc.Argument(2)
 		reqBody                   = fc.Argument(3)
-		result                    = newResponseProxy(vm, f.cfg.Stream)
+		result                    = f.respPool.Get()
 		bodyType                  = reqBody.ExportType()
 		url        string         = reqURL.String()
 		method     string         = reqMethod.String()
 		headers    map[string]any = reqHeaders.Export().(map[string]any)
 		useBody    io.Reader      = nil
-		cleanup    func()         = func() {}
 	)
+	f.ioContext.RegisterCleanup(func() {
+		f.respPool.Put(result)
+	})
 
 	if goja.IsUndefined(reqBody) || goja.IsNull(reqBody) {
 		// no body
 	} else if bodyType.Kind() == reflect.String {
-		useBody = bytes.NewBufferString(reqBody.String())
+		strBuf := pool.NewBufferString(reqBody.String())
+		f.ioContext.RegisterCleanup(strBuf.Reset)
+		useBody = strBuf
 	} else {
 		// possibly wrapped ReadableStream
-		stream := reqBody.ToObject(vm)
-		wrapper := stream.Get("wrapper")
-		w, ok := AsNativeWrapper(wrapper)
+		reader, ok := common.AssertReader(reqBody, vm)
 		if !ok {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				reject(vm.NewGoError(ErrUnsupportedReadableStream))
 			})
 			return
 		}
-		useBody = w.GetReader()
-		cleanup = func() {
-			f.cfg.Stream.Close(w)
-		}
+		useBody = reader
 	}
 
 	go func() {
-		defer cleanup()
+		err := f.ioContext.AcquireFetchToken()
+		if err != nil {
+			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+				reject(err)
+			})
+			return
+		}
+		defer f.ioContext.ReleaseFetchToken()
 
-		req, err := http.NewRequestWithContext(f.ctx, method, url, useBody)
+		req, err := http.NewRequestWithContext(f.ioContext.Context(), method, url, useBody)
 		if err != nil {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				reject(err)
@@ -122,7 +90,7 @@ func (f *nativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 			})
 		} else {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				result.WithResponse(vm, resp)
+				result.WithResponse(f.ioContext, vm, resp)
 				resolve(result.nativeObj)
 			})
 		}

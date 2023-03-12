@@ -5,31 +5,27 @@ import (
 	"net/http"
 	"sort"
 
+	"go.miragespace.co/heresy/polyfill"
+
 	"github.com/dop251/goja"
 )
 
 type HeadersProxy struct {
-	Runtime   *goja.Runtime
 	nativeObj *goja.Object
 	header    http.Header
+	vm        *goja.Runtime
 }
 
 var _ goja.DynamicObject = (*HeadersProxy)(nil)
 
-func NewHeadersProxy(vm *goja.Runtime) *HeadersProxy {
-	headesrClass := vm.Get("Headers")
-	headersConstructor, ok := goja.AssertConstructor(headesrClass)
-	if !ok {
-		panic("runtime panic: Headers is not a constructor, please check if polyfill is enabled")
-	}
-
-	headersInstance, err := headersConstructor(nil)
+func newHeadersProxy(vm *goja.Runtime, symbols *polyfill.RuntimeSymbols) *HeadersProxy {
+	headersInstance, err := symbols.Headers()(nil)
 	if err != nil {
 		panic(fmt.Errorf("runtime panic: (new Headers) constructor call returned an error: %w", err))
 	}
 
 	proxy := &HeadersProxy{
-		Runtime:   vm,
+		vm:        vm,
 		nativeObj: headersInstance,
 	}
 	headersInstance.Set("map", vm.NewDynamicObject(proxy))
@@ -41,7 +37,7 @@ func (h *HeadersProxy) UseHeader(header http.Header) {
 	h.header = header
 }
 
-func (h *HeadersProxy) UnsetHeader() {
+func (h *HeadersProxy) unsetHeader() {
 	h.header = nil
 }
 
@@ -52,7 +48,7 @@ func (h *HeadersProxy) NativeObject() goja.Value {
 func (h *HeadersProxy) Get(key string) goja.Value {
 	v := h.header.Get(key)
 	if v != "" {
-		return h.Runtime.ToValue(v)
+		return h.vm.ToValue(v)
 	}
 	return goja.Undefined()
 }

@@ -1,15 +1,13 @@
 package heresy
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"runtime"
 	"sync/atomic"
 	"time"
 
-	"go.miragespace.co/heresy/event"
-	"go.miragespace.co/heresy/express"
+	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
@@ -19,39 +17,15 @@ import (
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/dop251/goja_nodejs/require"
-	"github.com/dop251/goja_nodejs/url"
 	"go.uber.org/zap"
 )
 
 type Runtime struct {
 	logger    *zap.Logger
+	transport http.RoundTripper
 	shards    []atomic.Pointer[runtimeInstance]
 	nextShard uint32
 	numShards int
-}
-
-var nilInstance *runtimeInstance = nil
-
-type handlerType int
-
-const (
-	handlerTypeUnset handlerType = iota
-	handlerTypeExpress
-	handlerTypeEvent
-)
-
-type runtimeInstance struct {
-	logger            *zap.Logger
-	middlewareHandler atomic.Value                         // goja.Value
-	middlewareType    atomic.Value                         // handlerType
-	handlerOption     atomic.Pointer[nativeHandlerOptions] // nativeHandlerOptions
-	contextPool       *express.RequestContextPool
-	eventPool         *event.FetchEventPool
-	eventLoop         *eventloop.EventLoop
-	resolver          *promise.PromiseResolver
-	stream            *stream.StreamController
-	fetcher           *fetch.Fetch
-	vm                *goja.Runtime
 }
 
 // NewRuntime returns a new heresy runtime. Use shards > 1 to enable round-robin
@@ -65,8 +39,15 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 		return nil, fmt.Errorf("shards cannot be smaller than 1")
 	}
 
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 500
+	t.MaxConnsPerHost = 100
+	t.MaxIdleConnsPerHost = 10
+	t.IdleConnTimeout = time.Minute
+
 	rt := &Runtime{
 		logger:    logger,
+		transport: t,
 		shards:    make([]atomic.Pointer[runtimeInstance], shards),
 		numShards: shards,
 	}
@@ -108,7 +89,7 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 		loggerModule := zap_console.RequireWithLogger(rt.logger)
 		registry.RegisterNativeModule(zap_console.ModuleName, loggerModule)
 
-		instance, err := rt.getInstance(registry)
+		instance, err := rt.getInstance(rt.transport, registry)
 		if err != nil {
 			return err
 		}
@@ -141,7 +122,7 @@ func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
 	fn(instance)
 }
 
-func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeInstance, err error) {
+func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) (instance *runtimeInstance, err error) {
 	eventLoop := eventloop.NewEventLoop(
 		eventloop.EnableConsole(false),
 		eventloop.WithRegistry(registry),
@@ -155,15 +136,17 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 	}()
 
 	instance = &runtimeInstance{
-		logger:    rt.logger,
-		eventLoop: eventLoop,
+		logger:        rt.logger,
+		eventLoop:     eventLoop,
+		ioContextPool: common.NewIOContextPool(10),
 	}
 
 	var options nativeHandlerOptions
 	instance.handlerOption.Store(&options)
 	instance.middlewareType.Store(handlerTypeUnset)
 
-	err = polyfill.PolyfillRuntime(eventLoop)
+	var symbols *polyfill.RuntimeSymbols
+	symbols, err = polyfill.PolyfillRuntime(eventLoop)
 	if err != nil {
 		return
 	}
@@ -182,14 +165,15 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		Eventloop: eventLoop,
 		Stream:    instance.stream,
 		Client: &http.Client{
-			Timeout: time.Second * 10,
+			Timeout:   time.Second * 10,
+			Transport: t,
 		},
 	})
 	if err != nil {
 		return
 	}
 
-	err = <-instance.prepareInstance(rt.logger)
+	err = <-instance.prepareInstance(rt.logger, symbols)
 
 	return
 }
@@ -201,90 +185,4 @@ func (rt *Runtime) Stop(interrupt bool) {
 			old.stop(interrupt)
 		}
 	}
-}
-
-func (inst *runtimeInstance) stop(interrupt bool) {
-	if interrupt {
-		inst.vm.Interrupt(context.Canceled)
-	}
-	inst.eventLoop.StopNoWait()
-}
-
-func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
-	if goja.IsUndefined(opt) {
-		return
-	}
-	var options nativeHandlerOptions
-	if err := vm.ExportTo(opt, &options); err == nil {
-		inst.handlerOption.Store(&options)
-	}
-}
-
-func (inst *runtimeInstance) prepareInstance(logger *zap.Logger) (setup chan error) {
-	setup = make(chan error, 1)
-
-	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-		url.Enable(vm)
-		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-		vm.Set("console", require.Require(vm, zap_console.ModuleName))
-
-		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
-			ret = goja.Undefined()
-
-			opt := fc.Argument(1)
-			inst.optionHelper(vm, opt)
-
-			fn := fc.Argument(0)
-			if _, ok := goja.AssertFunction(fn); ok {
-				inst.middlewareHandler.Store(fn)
-				inst.middlewareType.Store(handlerTypeExpress)
-			}
-
-			return
-		})
-
-		vm.Set("registerEventHandler", func(fc goja.FunctionCall) (ret goja.Value) {
-			ret = goja.Undefined()
-
-			opt := fc.Argument(1)
-			inst.optionHelper(vm, opt)
-
-			fn := fc.Argument(0)
-			if _, ok := goja.AssertFunction(fn); ok {
-				inst.middlewareHandler.Store(fn)
-				inst.middlewareType.Store(handlerTypeEvent)
-			}
-
-			return
-		})
-
-		inst.contextPool = express.NewRequestContextPool(inst.eventLoop)
-		inst.eventPool = event.NewFetchEventPool(event.FetchEventDeps{
-			Logger:    logger,
-			Eventloop: inst.eventLoop,
-			Stream:    inst.stream,
-			Resolver:  inst.resolver,
-			Fetch:     inst.fetcher,
-		})
-		inst.vm = vm // reference is kept for .Interrupt
-
-		setup <- nil
-	})
-
-	return
-}
-
-func (inst *runtimeInstance) loadProgram(prog *goja.Program) (setup chan error) {
-	setup = make(chan error, 1)
-
-	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-		_, err := vm.RunProgram(prog)
-		if err != nil {
-			setup <- fmt.Errorf("error setting up handler script: %w", err)
-			return
-		}
-		setup <- nil
-	})
-
-	return
 }

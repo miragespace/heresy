@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"go.miragespace.co/heresy/extensions/common"
-	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 )
@@ -23,17 +22,11 @@ var _ goja.DynamicObject = (*fetchEventRequest)(nil)
 
 func newFetchEventRequest(evt *FetchEvent) *fetchEventRequest {
 	req := &fetchEventRequest{
-		FetchEvent:   evt,
-		nativeBody:   goja.Null(),
-		bodyConsumed: false,
+		FetchEvent:            evt,
+		bodyConsumed:          false,
+		nativeBody:            goja.Null(),
+		nativeRequestInstance: evt.deps.Symbols.Request(),
 	}
-	req.headersProxy = common.NewHeadersProxy(evt.vm)
-
-	reqeustInstance := evt.vm.Get(polyfill.RuntimeRequestInstanceSymbol)
-	if goja.IsUndefined(reqeustInstance) {
-		panic("runtime panic: Polyfill symbols not found, please check if polyfill is enabled")
-	}
-	req.nativeRequestInstance = reqeustInstance.ToObject(evt.vm)
 
 	req.nativeReq = evt.vm.NewDynamicObject(req)
 	req.nativeReq.SetPrototype(req.nativeRequestInstance.Prototype())
@@ -41,23 +34,19 @@ func newFetchEventRequest(evt *FetchEvent) *fetchEventRequest {
 	return req
 }
 
-func (req *fetchEventRequest) initialize() {
+func (req *fetchEventRequest) initializeBody() {
 	switch req.httpReq.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		nativeBody, err := req.deps.Stream.NewReadableStream(req.httpReq.Body)
-		if err != nil {
-			panic(fmt.Errorf("runtime panic: Failed to convert httpReq.Body into native ReadableStream: %w", err))
-		}
-		req.nativeBody = nativeBody
+		readable := req.deps.Stream.NewReadableStreamVM(req.ioContext, req.httpReq.Body, req.vm)
+		req.nativeBody = readable.NativeStream()
 	}
-	req.headersProxy.UseHeader(req.httpReq.Header)
 }
 
 func (req *fetchEventRequest) reset() {
-	req.headersProxy.UnsetHeader()
-	req.nativeBody = goja.Null()
 	req.bodyConsumed = false
+	req.nativeBody = goja.Null()
+	req.headersProxy = nil
 }
 
 func (req *fetchEventRequest) Get(key string) goja.Value {
@@ -76,9 +65,18 @@ func (req *fetchEventRequest) Get(key string) goja.Value {
 	case "bodyUsed", "_consumed":
 		return req.vm.ToValue(req.bodyConsumed)
 	case "body", "bodyInit", "_bodyReadableStream":
+		// lazy initialization
+		if goja.IsNull(req.nativeBody) {
+			req.initializeBody()
+		}
 		return req.nativeBody
 
 	case "headers":
+		// lazy initialization
+		if req.headersProxy == nil {
+			req.headersProxy = req.ioContext.GetHeadersProxy()
+			req.headersProxy.UseHeader(req.httpReq.Header)
+		}
 		return req.headersProxy.NativeObject()
 
 	default:

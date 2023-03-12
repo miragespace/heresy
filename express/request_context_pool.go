@@ -3,16 +3,25 @@ package express
 import (
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/fetch"
+
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
+	"go.uber.org/zap"
 )
+
+type RequestContextDeps struct {
+	Logger    *zap.Logger
+	Eventloop *eventloop.EventLoop
+	Fetch     *fetch.Fetch
+}
 
 type RequestContextPool struct {
 	ctxPool sync.Pool
 	chPool  sync.Pool
 }
 
-func NewRequestContextPool(eventLoop *eventloop.EventLoop) *RequestContextPool {
+func NewRequestContextPool(deps RequestContextDeps) *RequestContextPool {
 	pool := &RequestContextPool{}
 	pool.chPool = sync.Pool{
 		New: func() any {
@@ -26,8 +35,8 @@ func NewRequestContextPool(eventLoop *eventloop.EventLoop) *RequestContextPool {
 
 			// initialization of new native variable has to be
 			// ran on the loop
-			eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-				ctxCh <- newRequestContext(vm)
+			deps.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+				ctxCh <- newRequestContext(vm, deps)
 			})
 			return <-ctxCh
 		},

@@ -41,19 +41,17 @@ func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
 
+	ioCtx := inst.ioContextPool.Get(r.Context())
+	defer inst.ioContextPool.Put(ioCtx)
+
 	ctx := inst.contextPool.Get()
 	defer inst.contextPool.Put(ctx)
 
-	ctx.WithHttp(w, r, next)
+	ctx.WithHttp(w, r, next).WithIOContext(ioCtx)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
-		fetcher, err := inst.fetcher.NewNativeFetch(r.Context())
-		if err != nil {
-			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
-		}
-		ctx.WithFetch(fetcher)
-		defer inst.fetcher.DoneWith(fetcher)
+		ctx.EnableFetch()
 	}
 
 	if err := inst.resolver.NewPromiseFuncWithArg(
@@ -71,19 +69,17 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
 
+	ioCtx := inst.ioContextPool.Get(r.Context())
+	defer inst.ioContextPool.Put(ioCtx)
+
 	evt := inst.eventPool.Get()
 	defer inst.eventPool.Put(evt)
 
-	evt.WithHttp(w, r, next)
+	evt.WithHttp(w, r, next).WithIOContext(ioCtx)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
-		fetcher, err := inst.fetcher.NewNativeFetch(r.Context())
-		if err != nil {
-			panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
-		}
-		evt.WithFetch(fetcher)
-		defer inst.fetcher.DoneWith(fetcher)
+		evt.EnableFetch()
 	}
 
 	if err := inst.resolver.NewPromiseFuncWithArg(

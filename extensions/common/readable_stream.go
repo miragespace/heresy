@@ -8,7 +8,7 @@ import (
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
-const BufferSize = 16 * 1024
+const BufferSize = 8 * 1024
 
 type NativeReaderWrapper struct {
 	reader    io.ReadCloser
@@ -18,7 +18,6 @@ type NativeReaderWrapper struct {
 
 	_readInto goja.Value
 	_size     goja.Value
-	_close    goja.Value
 }
 
 var keys = []string{"bufferSize"}
@@ -33,20 +32,11 @@ func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop) *N
 	s.nativeObj = vm.NewDynamicObject(s)
 	s._readInto = vm.ToValue(s.ReadInto)
 	s._size = vm.ToValue(BufferSize)
-	s._close = vm.ToValue(s.nativeClose)
 	return s
 }
 
 func (s *NativeReaderWrapper) WithReader(r io.ReadCloser) {
 	s.reader = r
-}
-
-func (s *NativeReaderWrapper) GetReader() io.ReadCloser {
-	return s.reader
-}
-
-func (s *NativeReaderWrapper) OverwriteClose(fn goja.Value) {
-	s._close = fn
 }
 
 func (s *NativeReaderWrapper) NativeObject() goja.Value {
@@ -64,8 +54,6 @@ func (s *NativeReaderWrapper) Get(key string) goja.Value {
 		return s._readInto
 	case "bufferSize":
 		return s._size
-	case "close":
-		return s._close
 	default:
 		return goja.Undefined()
 	}
@@ -118,13 +106,16 @@ func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 	return
 }
 
-func (s *NativeReaderWrapper) Close() {
-	if s.reader != nil {
-		s.reader.Close()
+func AssertReader(native goja.Value, vm *goja.Runtime) (io.Reader, bool) {
+	// see extension/stream/wrapper.ts
+	obj := native.ToObject(vm)
+	wrapper := obj.Get("wrapper")
+	if wrapper == nil {
+		return nil, false
 	}
-}
-
-func (s *NativeReaderWrapper) nativeClose(fc goja.FunctionCall) goja.Value {
-	s.Close()
-	return goja.Undefined()
+	w, ok := wrapper.Export().(*NativeReaderWrapper)
+	if ok {
+		return w.reader, true
+	}
+	return nil, false
 }

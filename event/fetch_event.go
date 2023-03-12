@@ -9,9 +9,9 @@ import (
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
-	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
+	pool "github.com/libp2p/go-buffer-pool"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +19,7 @@ type FetchEvent struct {
 	httpReq               *http.Request
 	httpResp              http.ResponseWriter
 	httpNext              http.Handler
+	ioContext             *common.IOContext
 	requestProxy          *fetchEventRequest
 	nativeFetch           goja.Value
 	nativeRequestResolve  goja.Value
@@ -41,17 +42,12 @@ var _ goja.DynamicObject = (*FetchEvent)(nil)
 
 func newFetchEvent(vm *goja.Runtime, deps FetchEventDeps) *FetchEvent {
 	evt := &FetchEvent{
-		requestDone:  make(chan struct{}, 1),
-		responseDone: make(chan struct{}, 1),
-		deps:         deps,
-		vm:           vm,
+		nativeEvtInstance: deps.Symbols.FetchEvent(),
+		requestDone:       make(chan struct{}, 1),
+		responseDone:      make(chan struct{}, 1),
+		deps:              deps,
+		vm:                vm,
 	}
-
-	fetchEventInstance := evt.vm.Get(polyfill.RuntimeFetchEventInstanceSymbol)
-	if goja.IsUndefined(fetchEventInstance) {
-		panic("runtime panic: Polyfill symbols not found, please check if polyfill is enabled")
-	}
-	evt.nativeEvtInstance = fetchEventInstance.ToObject(vm)
 
 	evt.requestProxy = newFetchEventRequest(evt)
 	evt.nativeRequestResolve = evt.getNativeRequestResolver()
@@ -74,6 +70,7 @@ func (evt *FetchEvent) reset() {
 	evt.useRespondWith = false
 	evt.responseSent = false
 	evt.requestProxy.reset()
+	evt.ioContext = nil
 }
 
 func (evt *FetchEvent) Get(key string) goja.Value {
@@ -86,6 +83,11 @@ func (evt *FetchEvent) Get(key string) goja.Value {
 		return evt.requestProxy.nativeReq
 	case "fetch":
 		if evt.hasFetch {
+			// lazy initialization
+			if evt.nativeFetch == nil {
+				fetcher := evt.deps.Fetch.NewNativeFetchVM(evt.ioContext, evt.vm)
+				evt.nativeFetch = fetcher.NativeFunc()
+			}
 			return evt.nativeFetch
 		}
 		fallthrough
@@ -115,15 +117,17 @@ func (evt *FetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next htt
 	evt.httpReq = r
 	evt.httpNext = next
 
-	evt.requestProxy.initialize()
+	return evt
+}
+
+func (evt *FetchEvent) WithIOContext(t *common.IOContext) *FetchEvent {
+	evt.ioContext = t
 
 	return evt
 }
 
-func (evt *FetchEvent) WithFetch(f goja.Value) *FetchEvent {
+func (evt *FetchEvent) EnableFetch() {
 	evt.hasFetch = true
-	evt.nativeFetch = f
-	return evt
 }
 
 func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
@@ -199,31 +203,25 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			status      int64          = respStatus.ToInteger()
 			headers     map[string]any = respHeaders.Export().(map[string]any)
 			useBody     io.Reader      = nil
-			cleanup     func()         = func() {}
 		)
 
 		if goja.IsUndefined(respBody) || goja.IsNull(respBody) {
 			// no body
 			useBody = &bytes.Buffer{}
 		} else if bodyType.Kind() == reflect.String {
-			useBody = bytes.NewBufferString(respBody.String())
+			strBuf := pool.NewBufferString(respBody.String())
+			evt.ioContext.RegisterCleanup(strBuf.Reset)
+			useBody = strBuf
 		} else {
 			// possibly wrapped ReadableStream
-			stream := respBody.ToObject(evt.vm)
-			wrapper := stream.Get("wrapper")
-			w, ok := fetch.AsNativeWrapper(wrapper)
+			reader, ok := common.AssertReader(respBody, evt.vm)
 			if !ok {
 				panic(evt.vm.NewGoError(fetch.ErrUnsupportedReadableStream))
 			}
-			useBody = w.GetReader()
-			cleanup = func() {
-				evt.deps.Stream.Close(w)
-			}
+			useBody = reader
 		}
 
 		go func() {
-			defer cleanup()
-
 			for k, v := range headers {
 				w.Header().Set(k, fmt.Sprintf("%s", v))
 			}

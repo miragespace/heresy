@@ -1,6 +1,5 @@
 interface RuntimeReaderHandler {
   readonly bufferSize: number;
-  close(handler: RuntimeReaderHandler): void;
   readInto(
     buffer: ArrayBuffer,
     offset: number,
@@ -8,7 +7,9 @@ interface RuntimeReaderHandler {
   ): Promise<number>;
 }
 
-const __runtimeIOReaderWrapper = (goWrapper: RuntimeReaderHandler) => {
+const __runtimeIOReaderWrapper = (
+  goWrapper: RuntimeReaderHandler
+): ReadableStream => {
   const stream = new ReadableStream({
     type: "bytes",
     autoAllocateChunkSize: goWrapper.bufferSize,
@@ -25,14 +26,11 @@ const __runtimeIOReaderWrapper = (goWrapper: RuntimeReaderHandler) => {
         view.byteLength
       );
       if (read === 0) {
-        goWrapper.close(goWrapper);
         controller.close();
       }
       controller.byobRequest.respond(read);
     },
-    cancel() {
-      goWrapper.close(goWrapper);
-    },
+    cancel() {},
   });
   // save the reference of NativeReaderWrapper,
   // needed for Fetcher

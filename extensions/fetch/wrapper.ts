@@ -17,7 +17,6 @@ interface RuntimeFetchHandler {
     headers: Record<string, string>,
     body?: ReadableStream | string
   ): Promise<RuntimeFetchResult>;
-  unsetCtx(): void;
 }
 
 interface Body {
@@ -30,7 +29,7 @@ interface Body {
 const __runtimeFetch = (
   goWrapper: RuntimeFetchHandler
 ): typeof runtimeFetch => {
-  const fn = async (
+  return async (
     input: Request | string,
     options?: Request | RequestInit
   ): Promise<Response> => {
@@ -56,18 +55,12 @@ const __runtimeFetch = (
       useBody
     );
 
-    goWrapper.unsetCtx();
-
     return new Response(body, {
       status: statusCode,
       statusText: statusText,
       headers: header,
     });
   };
-  // save the reference of NativeFetchWrapper,
-  // needed for Fetch reuse
-  (fn as any).wrapper = goWrapper;
-  return fn;
 };
 
 // this is a helper for FetchEvent.respondWith

@@ -10,14 +10,11 @@ const __runtimeIOReaderWrapper = (goWrapper) => {
             const view = controller.byobRequest.view;
             const read = await goWrapper.readInto(view.buffer, view.byteOffset, view.byteLength);
             if (read === 0) {
-                goWrapper.close(goWrapper);
                 controller.close();
             }
             controller.byobRequest.respond(read);
         },
-        cancel() {
-            goWrapper.close(goWrapper);
-        },
+        cancel() { },
     });
     // save the reference of NativeReaderWrapper,
     // needed for Fetcher

@@ -6,6 +6,7 @@ import (
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
@@ -14,6 +15,7 @@ import (
 
 type FetchEventDeps struct {
 	Logger    *zap.Logger
+	Symbols   *polyfill.RuntimeSymbols
 	Eventloop *eventloop.EventLoop
 	Stream    *stream.StreamController
 	Resolver  *promise.PromiseResolver

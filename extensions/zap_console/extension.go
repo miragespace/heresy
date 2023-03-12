@@ -16,7 +16,7 @@ type Console struct {
 
 func (c *Console) log(log func(msg string, fields ...zap.Field)) func(goja.FunctionCall, *goja.Runtime) goja.Value {
 	return func(call goja.FunctionCall, vm *goja.Runtime) goja.Value {
-		stacks := vm.CaptureCallStack(0, nil)
+		stacks := vm.CaptureCallStack(2, nil)
 		caller := stacks[1]
 
 		if format, ok := goja.AssertFunction(c.util.Get("format")); ok {

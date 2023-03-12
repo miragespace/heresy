@@ -1,7 +1,6 @@
 package fetch
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -21,13 +20,23 @@ type Fetch struct {
 	FetchConfig
 	runtimeFetchWrapper  goja.Callable
 	runtimeReponseHelper goja.Value
-	nativeObjPool        sync.Pool
+	fetcherPool          sync.Pool
+	respPool             *responseProxyPool
 }
 
 type FetchConfig struct {
 	Stream    *stream.StreamController
 	Eventloop *eventloop.EventLoop
 	Client    *http.Client
+}
+
+type NativeFetcher struct {
+	nativeWrapper *NativeFetchWrapper
+	nativeFunc    goja.Value
+}
+
+func (n *NativeFetcher) NativeFunc() goja.Value {
+	return n.nativeFunc
 }
 
 func (c *FetchConfig) Validate() error {
@@ -71,19 +80,25 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 		promiseResolver = vm.Get(responseHelperSymbol)
 		f.runtimeReponseHelper = promiseResolver
 
-		f.nativeObjPool = sync.Pool{
+		f.respPool = newResponseProxyPool(vm, f.Stream)
+
+		f.fetcherPool = sync.Pool{
 			New: func() any {
-				w := &nativeFetchWrapper{
+				wrapper := &NativeFetchWrapper{
 					cfg: f.FetchConfig,
 				}
-				w._doFetch = vm.ToValue(w.DoFetch)
-				w._unsetCtx = vm.ToValue(w.UnsetCtx)
-				obj := vm.NewDynamicObject(w)
-				fn, _ := f.runtimeFetchWrapper(goja.Undefined(), obj)
-				return fn
+				obj := vm.CreateObject(nil)
+				obj.Set("doFetch", vm.ToValue(wrapper.DoFetch))
+				fn, err := f.runtimeFetchWrapper(goja.Undefined(), obj)
+				if err != nil {
+					panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
+				}
+				return &NativeFetcher{
+					nativeWrapper: wrapper,
+					nativeFunc:    fn,
+				}
 			},
 		}
-
 		setup <- nil
 	})
 
@@ -98,45 +113,25 @@ func (f *Fetch) GetResponseHelper() goja.Value {
 	return f.runtimeReponseHelper
 }
 
-func (f *Fetch) DoneWith(native goja.Value) {
-	if _, ok := goja.AssertFunction(native); !ok {
-		return
-	}
-	f.nativeObjPool.Put(native)
-}
+// func (f *Fetch) NewNativeFetch(t *common.IOContext) *NativeFetcher {
+// 	valCh := make(chan *NativeFetcher, 1)
+// 	f.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+// 		valCh <- f.NewNativeFetchVM(t, vm)
+// 	})
 
-func (f *Fetch) NewNativeFetch(ctx context.Context) (goja.Value, error) {
-	valCh := make(chan goja.Value, 1)
-	errCh := make(chan error, 1)
-	f.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-		s, err := f.NewNativeFetchVM(ctx, vm)
-		if err != nil {
-			errCh <- err
-		} else {
-			valCh <- s
-		}
+// 	return <-valCh
+// }
+
+func (f *Fetch) NewNativeFetchVM(t *common.IOContext, vm *goja.Runtime) *NativeFetcher {
+	fetcher := f.fetcherPool.Get().(*NativeFetcher)
+	fetcher.nativeWrapper.WithIOContext(t)
+	fetcher.nativeWrapper.respPool = f.respPool
+
+	t.RegisterCleanup(func() {
+		fetcher.nativeWrapper.respPool = nil
+		fetcher.nativeWrapper.ioContext = nil
+		f.fetcherPool.Put(fetcher)
 	})
 
-	select {
-	case err := <-errCh:
-		return nil, err
-	case v := <-valCh:
-		return v, nil
-	}
-}
-
-func (f *Fetch) NewNativeFetchVM(ctx context.Context, vm *goja.Runtime) (goja.Value, error) {
-	fn := f.nativeObjPool.Get().(*goja.Object)
-	w := fn.Get("wrapper").Export().(*nativeFetchWrapper)
-	w.WithContext(ctx)
-
-	return fn, nil
-}
-
-func AsNativeWrapper(wrapper goja.Value) (*common.NativeReaderWrapper, bool) {
-	if wrapper == nil {
-		return nil, false
-	}
-	w, ok := wrapper.Export().(*common.NativeReaderWrapper)
-	return w, ok
+	return fetcher
 }

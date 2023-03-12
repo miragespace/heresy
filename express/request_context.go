@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.miragespace.co/heresy/extensions/common"
+
 	"github.com/dop251/goja"
 )
 
@@ -11,12 +13,14 @@ type RequestContext struct {
 	httpReq       *http.Request
 	httpResp      http.ResponseWriter
 	httpNext      http.Handler
+	ioContext     *common.IOContext
 	responseProxy *contextResponse
 	requestProxy  *contextRequest
 	nativeFetch   goja.Value
 	nativeResolve goja.Value
 	nativeReject  goja.Value
 	requestDone   chan struct{}
+	deps          RequestContextDeps
 	vm            *goja.Runtime
 	nativeCtx     *goja.Object
 	hasFetch      bool
@@ -28,9 +32,10 @@ type RequestContext struct {
 
 var _ goja.DynamicObject = (*RequestContext)(nil)
 
-func newRequestContext(vm *goja.Runtime) *RequestContext {
+func newRequestContext(vm *goja.Runtime, deps RequestContextDeps) *RequestContext {
 	ctx := &RequestContext{
 		requestDone: make(chan struct{}, 1),
+		deps:        deps,
 		vm:          vm,
 	}
 	ctx.nativeResolve = ctx.getNativeContextResolver()
@@ -51,6 +56,7 @@ func (ctx *RequestContext) reset() {
 	ctx.nextInvoked = false
 	ctx.responseSent = false
 	ctx.responseProxy.reset()
+	ctx.ioContext = nil
 }
 
 func (ctx *RequestContext) Get(key string) goja.Value {
@@ -63,6 +69,11 @@ func (ctx *RequestContext) Get(key string) goja.Value {
 		return ctx.vm.ToValue(ctx.nativeNext)
 	case "fetch":
 		if ctx.hasFetch {
+			// lazy initialization
+			if ctx.nativeFetch == nil {
+				fetcher := ctx.deps.Fetch.NewNativeFetchVM(ctx.ioContext, ctx.vm)
+				ctx.nativeFetch = fetcher.NativeFunc()
+			}
 			return ctx.nativeFetch
 		}
 		fallthrough
@@ -99,10 +110,14 @@ func (ctx *RequestContext) WithHttp(w http.ResponseWriter, r *http.Request, next
 	return ctx
 }
 
-func (ctx *RequestContext) WithFetch(f goja.Value) *RequestContext {
-	ctx.hasFetch = true
-	ctx.nativeFetch = f
+func (ctx *RequestContext) WithIOContext(t *common.IOContext) *RequestContext {
+	ctx.ioContext = t
+
 	return ctx
+}
+
+func (ctx *RequestContext) EnableFetch() {
+	ctx.hasFetch = true
 }
 
 func (ctx *RequestContext) nativeNext(fc goja.FunctionCall) goja.Value {
