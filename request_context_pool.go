@@ -39,6 +39,6 @@ func (p *requestContextPool) Get() *requestContext {
 }
 
 func (p *requestContextPool) Put(ctx *requestContext) {
-	ctx.reset()
+	ctx.Reset()
 	p.ctxPool.Put(ctx)
 }

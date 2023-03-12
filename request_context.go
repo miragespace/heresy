@@ -42,7 +42,7 @@ func newRequestContext(vm *goja.Runtime) *requestContext {
 	return ctx
 }
 
-func (ctx *requestContext) reset() {
+func (ctx *requestContext) Reset() {
 	ctx.httpReq = nil
 	ctx.httpResp = nil
 	ctx.httpNext = nil

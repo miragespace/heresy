@@ -15,7 +15,7 @@ var (
 func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rt.shardRun(func(instance *runtimeInstance) {
-			if instance == nil {
+			if instance == nilInstance {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				fmt.Fprint(w, ErrRuntimeNotReady)
 				return

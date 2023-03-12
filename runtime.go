@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
+	"go.miragespace.co/heresy/extensions/zap_console"
 	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/alitto/pond"
 	"github.com/dop251/goja"
-	"github.com/dop251/goja_nodejs/console"
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/dop251/goja_nodejs/require"
 	"github.com/dop251/goja_nodejs/url"
@@ -26,15 +25,12 @@ import (
 type Runtime struct {
 	logger    *zap.Logger
 	scheduler *pond.WorkerPool
-	shards    []*instanceShard
+	shards    []atomic.Pointer[runtimeInstance]
 	nextShard uint32
 	numShards int
 }
 
-type instanceShard struct {
-	mu       sync.RWMutex
-	instance *runtimeInstance
-}
+var nilInstance *runtimeInstance = nil
 
 type handlerType int
 
@@ -71,12 +67,13 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 	rt := &Runtime{
 		logger:    logger,
 		scheduler: pond.New(100, 200),
-		shards:    make([]*instanceShard, shards),
+		shards:    make([]atomic.Pointer[runtimeInstance], shards),
 		numShards: shards,
 	}
 
 	for i := range rt.shards {
-		rt.shards[i] = &instanceShard{}
+		rt.shards[i] = atomic.Pointer[runtimeInstance]{}
+		rt.shards[i].Store(nilInstance)
 	}
 
 	logger.Info("Heresy runtime configured",
@@ -105,12 +102,11 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 	defer runtime.GC()
 
 	start := time.Now()
-	for _, shard := range rt.shards {
+	for i := range rt.shards {
 		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
-		runtimeLogger := newRuntimeLogger(scriptName, rt.logger)
-		loggerModule := console.RequireWithPrinter(runtimeLogger)
-		registry.RegisterNativeModule(loggerModuleName, loggerModule)
+		loggerModule := zap_console.RequireWithLogger(rt.logger)
+		registry.RegisterNativeModule(zap_console.ModuleName, loggerModule)
 
 		instance, err := rt.getInstance(registry)
 		if err != nil {
@@ -122,12 +118,10 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 			return err
 		}
 
-		shard.mu.Lock()
-		if shard.instance != nil {
-			shard.instance.stop(interrupt)
+		old := rt.shards[i].Swap(instance)
+		if old != nilInstance {
+			old.stop(interrupt)
 		}
-		shard.instance = instance
-		shard.mu.Unlock()
 	}
 
 	duration := time.Since(start)
@@ -142,12 +136,9 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 
 func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
 	n := atomic.AddUint32(&rt.nextShard, 1)
-	shard := rt.shards[(int(n)-1)%rt.numShards]
+	instance := rt.shards[(int(n)-1)%rt.numShards].Load()
 
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-
-	fn(shard.instance)
+	fn(instance)
 }
 
 func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeInstance, err error) {
@@ -165,6 +156,15 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 
 	instance = &runtimeInstance{
 		eventLoop: eventLoop,
+	}
+
+	var options nativeHandlerOptions
+	instance.handlerOption.Store(&options)
+	instance.middlewareType.Store(handlerTypeUnset)
+
+	err = <-instance.prepareInstance()
+	if err != nil {
+		return
 	}
 
 	err = polyfill.PolyfillRuntime(eventLoop)
@@ -194,23 +194,15 @@ func (rt *Runtime) getInstance(registry *require.Registry) (instance *runtimeIns
 		return
 	}
 
-	var options nativeHandlerOptions
-	instance.handlerOption.Store(&options)
-	instance.middlewareType.Store(handlerTypeUnset)
-
-	err = <-instance.prepareInstance()
-
 	return
 }
 
 func (rt *Runtime) Stop(interrupt bool) {
-	for _, shard := range rt.shards {
-		shard.mu.Lock()
-		if shard.instance != nil {
-			shard.instance.stop(interrupt)
-			shard.instance = nil
+	for i := range rt.shards {
+		old := rt.shards[i].Swap(nilInstance)
+		if old != nilInstance {
+			old.stop(interrupt)
 		}
-		shard.mu.Unlock()
 	}
 	rt.scheduler.Stop()
 }
@@ -238,7 +230,7 @@ func (inst *runtimeInstance) prepareInstance() (setup chan error) {
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		url.Enable(vm)
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-		vm.Set("console", require.Require(vm, loggerModuleName))
+		vm.Set("console", require.Require(vm, zap_console.ModuleName))
 		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 
