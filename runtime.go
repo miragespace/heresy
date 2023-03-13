@@ -60,7 +60,7 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 	}
 
 	logger.Info("Heresy runtime configured",
-		zap.Int("scheduler.maxWorkers", 100),
+		zap.Int("io.maxFetch", 10),
 		zap.Int("shards", shards),
 	)
 
@@ -91,7 +91,7 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 		loggerModule := zap_console.RequireWithLogger(rt.logger)
 		registry.RegisterNativeModule(zap_console.ModuleName, loggerModule)
 
-		instance, err := rt.getInstance(rt.transport, registry)
+		instance, err := rt.getInstance(rt.transport, registry, scriptName)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
 	fn(instance)
 }
 
-func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) (instance *runtimeInstance, err error) {
+func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry, scriptName string) (instance *runtimeInstance, err error) {
 	eventLoop := eventloop.NewEventLoop(
 		eventloop.EnableConsole(false),
 		eventloop.WithRegistry(registry),
@@ -174,7 +174,7 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 		return
 	}
 
-	err = <-instance.prepareInstance(rt.logger, symbols)
+	err = <-instance.prepareInstance(rt.logger, symbols, scriptName)
 
 	return
 }

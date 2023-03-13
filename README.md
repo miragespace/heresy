@@ -54,9 +54,10 @@ registerEventHandler(eventHandler)
 ### With network access
 
 ```javascript
+// fetch() will be undefined outside of the handler
 async function httpHandler(ctx) {
-    const { fetch, res } = ctx
-	const resp = await fetch("https://example.com/")
+    const { res } = ctx
+	const resp = await fetch("https://example.com/") // fetch() will be available in the handler
     res.send(await resp.text())
 }
 
@@ -74,11 +75,11 @@ registerMiddlewareHandler(httpHandler, {
 | Web Streams API (`ReadableStream`, etc), backed by `io.Reader`/`io.Writer` |
 | Fetch API (`Headers`, `Request`, `Response`)                               |
 
-| **Component** | Status       | req/request                                                     | resp/respondWith                                                 | next  |
-|---------------|--------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
-| Express.js    | WIP          | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
-| FetchEvent    | Implemented* | Works                                                           | Works                                                            | Works |
-| Fetch API     | Implemented  |                                                                 |                                                                  |       |
+| **Component** | Status                     | req/request                                                     | resp/respondWith                                                 | next  |
+|---------------|----------------------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
+| Express.js    | WIP                        | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
+| FetchEvent    | Implemented*               | Works                                                           | Works                                                            | Works |
+| Fetch API     | Available in handler scope |                                                                 |                                                                  |       |
 
 *: Even though ECMAScript is single-threaded in nature, heresy runtime manages data access and IOs asynchronously. Therefore, once your event handler returns, it should not call any methods from `FetchEvent`.
 
@@ -88,9 +89,9 @@ function eventHandler(evt) {
     // ...
     evt.respondWith(/* ... */)
     setTimeout(() => {
-        evt.fetch(/* ... */)
+        fetch(/* ... */)
     }, 100)
-    // evt.fetch will be called after your handler returns!
+    // fetch will be called after your handler returns!
 }
 ```
 
@@ -101,8 +102,8 @@ function eventHandler(evt) {
     evt.respondWith(/* ... */)
     evt.waitUntil((async () => {
         // e.g. send request metrics
-        await evt.fetch(/* ... */)
-        await evt.fetch(/* ... */)
+        await fetch(/* ... */)
+        await fetch(/* ... */)
     })())
 }
 ```
@@ -114,7 +115,7 @@ function eventHandler(evt) {
     evt.respondWith(/* ... */)
     setTimeout(() => {
         evt.waitUntil((async () => {
-            await evt.fetch(/* ... */)
+            await fetch(/* ... */)
         })())
     }, 100)
     // evt.waitUntil will be called after your handler returns!

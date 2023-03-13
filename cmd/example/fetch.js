@@ -1,7 +1,7 @@
 "use strict";
 
 async function httpHandler(ctx) {
-    const { fetch, res } = ctx
+    const { res } = ctx
 	const resp = await fetch("http://127.0.0.1:8000", {
         headers: {
             'User-Agent': 'heresy/fetcher'

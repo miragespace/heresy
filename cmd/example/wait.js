@@ -1,5 +1,5 @@
 async function eventHandler(evt) {
-    const { fetch, waitUntil, respondWith } = evt
+    const { waitUntil, respondWith } = evt
 
     const p = async () => {
         try {

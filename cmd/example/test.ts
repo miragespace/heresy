@@ -38,7 +38,6 @@ type MiddlewareContext = {
 	req: MiddlewareRequest
 	res: MiddlewareResponse
 	next(): void
-	fetch?(url: string): Promise<string>
 }
 
 type MiddlewareHandler = (ctx: MiddlewareContext) => void | Promise<void>

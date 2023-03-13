@@ -64,7 +64,7 @@ func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
 	}
 }
 
-func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfill.RuntimeSymbols) (setup chan error) {
+func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfill.RuntimeSymbols, scriptName string) (setup chan error) {
 	setup = make(chan error, 1)
 
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
@@ -80,7 +80,12 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 
 			fn := fc.Argument(0)
 			if _, ok := goja.AssertFunction(fn); ok {
-				inst.middlewareHandler.Store(fn)
+				newFn, err := recompileWithClosure(scriptName, fn, vm)
+				if err != nil {
+					logger.Error("Failed to register handler", zap.Error(err))
+					return
+				}
+				inst.middlewareHandler.Store(newFn)
 				inst.middlewareType.Store(handlerTypeExpress)
 			}
 
@@ -95,7 +100,12 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 
 			fn := fc.Argument(0)
 			if _, ok := goja.AssertFunction(fn); ok {
-				inst.middlewareHandler.Store(fn)
+				newFn, err := recompileWithClosure(scriptName, fn, vm)
+				if err != nil {
+					logger.Error("Failed to register handler", zap.Error(err))
+					return
+				}
+				inst.middlewareHandler.Store(newFn)
 				inst.middlewareType.Store(handlerTypeEvent)
 			}
 
