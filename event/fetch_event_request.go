@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/common/shared"
 
 	"github.com/dop251/goja"
 )
 
 type fetchEventRequest struct {
 	*FetchEvent
-	headersProxy          *common.HeadersProxy
+	headersProxy          *shared.HeadersProxy
 	nativeBody            goja.Value
 	nativeReq             *goja.Object
 	nativeRequestInstance *goja.Object

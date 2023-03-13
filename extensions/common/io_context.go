@@ -2,9 +2,10 @@ package common
 
 import (
 	"context"
-	"io"
 	"sync"
 	"sync/atomic"
+
+	"go.miragespace.co/heresy/extensions/common/shared"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
@@ -18,9 +19,9 @@ type IOContext struct {
 	shouldExtend         atomic.Bool
 	reqCtx               context.Context
 	logger               *zap.Logger
-	hdrPool              *HeadersProxyPool
+	hdrPool              *shared.HeadersProxyPool
 	limiter              *semaphore.Weighted
-	nativeReaderWrappers []*NativeReaderWrapper
+	nativeReaderWrappers []*shared.NativeReaderWrapper
 	cleanupFuncs         []func()
 }
 
@@ -28,7 +29,7 @@ func newIOContext(logger *zap.Logger, concurrent int64) *IOContext {
 	return &IOContext{
 		logger:               logger.With(zap.String("component", "ioContext")),
 		limiter:              semaphore.NewWeighted(concurrent),
-		nativeReaderWrappers: make([]*NativeReaderWrapper, 0),
+		nativeReaderWrappers: make([]*shared.NativeReaderWrapper, 0),
 		cleanupFuncs:         make([]func(), 0),
 	}
 }
@@ -62,10 +63,10 @@ func (t *IOContext) Context() context.Context {
 	}
 }
 
-func (t *IOContext) GetHeadersProxy() *HeadersProxy {
+func (t *IOContext) GetHeadersProxy() *shared.HeadersProxy {
 	h := t.hdrPool.Get()
 	t.RegisterCleanup(func() {
-		t.hdrPool.put(h)
+		t.hdrPool.Put(h)
 	})
 	return h
 }
@@ -93,7 +94,7 @@ func (t *IOContext) RegisterCleanup(c func()) {
 	// t.logger.Debug("cleanup registed", zap.String("via", caller.TrimmedPath()))
 }
 
-func (t *IOContext) TrackReader(w *NativeReaderWrapper) {
+func (t *IOContext) TrackReader(w *shared.NativeReaderWrapper) {
 	if w == nil {
 		return
 	}
@@ -122,10 +123,7 @@ func (t *IOContext) release() {
 	defer PutBuffer(buf)
 
 	for i := range t.nativeReaderWrappers {
-		reader := t.nativeReaderWrappers[i].reader
-		io.CopyBuffer(io.Discard, reader, buf)
-		reader.Close()
-		t.nativeReaderWrappers[i].reader = nil
+		t.nativeReaderWrappers[i].Reset(buf)
 	}
 	t.nativeReaderWrappers = t.nativeReaderWrappers[:0]
 

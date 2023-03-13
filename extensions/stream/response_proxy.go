@@ -1,28 +1,28 @@
-package fetch
+package stream
 
 import (
 	"net/http"
 
 	"go.miragespace.co/heresy/extensions/common"
-	"go.miragespace.co/heresy/extensions/stream"
+	"go.miragespace.co/heresy/extensions/common/shared"
 
 	"github.com/dop251/goja"
 )
 
-type responseProxy struct {
-	stream       *stream.StreamController
+type ResponseProxy struct {
+	stream       *StreamController
 	ioContext    *common.IOContext
 	resp         *http.Response
 	vm           *goja.Runtime
-	headersProxy *common.HeadersProxy
+	headersProxy *shared.HeadersProxy
 	nativeObj    *goja.Object
 	nativeBody   goja.Value
 }
 
-var _ goja.DynamicObject = (*responseProxy)(nil)
+var _ goja.DynamicObject = (*ResponseProxy)(nil)
 
-func newResponseProxy(vm *goja.Runtime, controller *stream.StreamController) *responseProxy {
-	r := &responseProxy{
+func newResponseProxy(vm *goja.Runtime, controller *StreamController) *ResponseProxy {
+	r := &ResponseProxy{
 		vm:         vm,
 		stream:     controller,
 		nativeBody: goja.Null(),
@@ -31,7 +31,11 @@ func newResponseProxy(vm *goja.Runtime, controller *stream.StreamController) *re
 	return r
 }
 
-func (r *responseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp *http.Response) {
+func (r *ResponseProxy) NativeObject() goja.Value {
+	return r.nativeObj
+}
+
+func (r *ResponseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp *http.Response) {
 	readable := r.stream.NewReadableStreamVM(t, resp.Body, vm)
 	r.nativeBody = readable.NativeStream()
 	r.resp = resp
@@ -39,14 +43,14 @@ func (r *responseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp
 	t.RegisterCleanup(r.reset)
 }
 
-func (r *responseProxy) reset() {
+func (r *ResponseProxy) reset() {
 	r.ioContext = nil
 	r.resp = nil
 	r.headersProxy = nil
 	r.nativeBody = goja.Null()
 }
 
-func (r *responseProxy) Get(key string) goja.Value {
+func (r *ResponseProxy) Get(key string) goja.Value {
 	switch key {
 	case "statusText":
 		return r.vm.ToValue(r.resp.Status)
@@ -68,18 +72,18 @@ func (r *responseProxy) Get(key string) goja.Value {
 	}
 }
 
-func (r *responseProxy) Set(key string, val goja.Value) bool {
+func (r *ResponseProxy) Set(key string, val goja.Value) bool {
 	return false
 }
 
-func (r *responseProxy) Has(key string) bool {
+func (r *ResponseProxy) Has(key string) bool {
 	return !goja.IsUndefined(r.Get(key))
 }
 
-func (r *responseProxy) Delete(key string) bool {
+func (r *ResponseProxy) Delete(key string) bool {
 	return false
 }
 
-func (r *responseProxy) Keys() []string {
+func (r *ResponseProxy) Keys() []string {
 	return []string{"body", "header", "statusCode", "statusText"}
 }

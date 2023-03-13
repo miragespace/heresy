@@ -1,4 +1,4 @@
-package common
+package shared
 
 import (
 	"errors"
@@ -30,9 +30,19 @@ func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop) *N
 		vm:        vm,
 	}
 	s.nativeObj = vm.NewDynamicObject(s)
-	s._readInto = vm.ToValue(s.ReadInto)
+	s._readInto = vm.ToValue(s.readInto)
 	s._size = vm.ToValue(BufferSize)
 	return s
+}
+
+func (s *NativeReaderWrapper) Reset(buf []byte) {
+	io.CopyBuffer(io.Discard, s.reader, buf)
+	s.reader.Close()
+	s.reader = nil
+}
+
+func (s *NativeReaderWrapper) Reader() io.ReadCloser {
+	return s.reader
 }
 
 func (s *NativeReaderWrapper) WithReader(r io.ReadCloser) {
@@ -75,7 +85,7 @@ func (s *NativeReaderWrapper) Keys() []string {
 	return keys
 }
 
-func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+func (s *NativeReaderWrapper) readInto(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	promise, resolve, reject := vm.NewPromise()
 	ret = vm.ToValue(promise)
 
@@ -104,18 +114,4 @@ func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 	}()
 
 	return
-}
-
-func AssertReader(native goja.Value, vm *goja.Runtime) (io.Reader, bool) {
-	// see extension/stream/wrapper.ts
-	obj := native.ToObject(vm)
-	wrapper := obj.Get("wrapper")
-	if wrapper == nil {
-		return nil, false
-	}
-	w, ok := wrapper.Export().(*NativeReaderWrapper)
-	if ok {
-		return w.reader, true
-	}
-	return nil, false
 }

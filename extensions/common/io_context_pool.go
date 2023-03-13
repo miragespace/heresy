@@ -4,26 +4,25 @@ import (
 	"context"
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/common/shared"
+
 	"go.uber.org/zap"
 )
 
 type IOContextPool struct {
 	ctxPool sync.Pool
-	hdrPool *HeadersProxyPool
+	hdrPool *shared.HeadersProxyPool
 }
 
-func NewIOContextPool(logger *zap.Logger, concurrent int64) *IOContextPool {
+func NewIOContextPool(logger *zap.Logger, hp *shared.HeadersProxyPool, concurrent int64) *IOContextPool {
 	return &IOContextPool{
 		ctxPool: sync.Pool{
 			New: func() any {
 				return newIOContext(logger, concurrent)
 			},
 		},
+		hdrPool: hp,
 	}
-}
-
-func (p *IOContextPool) WithHeadersPool(hp *HeadersProxyPool) {
-	p.hdrPool = hp
 }
 
 func (p *IOContextPool) Get(ctx context.Context) *IOContext {

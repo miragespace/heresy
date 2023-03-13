@@ -21,7 +21,6 @@ type Fetch struct {
 	runtimeFetchWrapper  goja.Callable
 	runtimeReponseHelper goja.Value
 	fetcherPool          sync.Pool
-	respPool             *responseProxyPool
 }
 
 type FetchConfig struct {
@@ -80,15 +79,13 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 		promiseResolver = vm.Get(responseHelperSymbol)
 		f.runtimeReponseHelper = promiseResolver
 
-		f.respPool = newResponseProxyPool(vm, f.Stream)
-
 		f.fetcherPool = sync.Pool{
 			New: func() any {
 				wrapper := &NativeFetchWrapper{
 					cfg: f.FetchConfig,
 				}
 				obj := vm.CreateObject(nil)
-				obj.Set("doFetch", vm.ToValue(wrapper.DoFetch))
+				obj.Set("doFetch", vm.ToValue(wrapper.doFetch))
 				fn, err := f.runtimeFetchWrapper(goja.Undefined(), obj)
 				if err != nil {
 					panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
@@ -125,10 +122,8 @@ func (f *Fetch) GetResponseHelper() goja.Value {
 func (f *Fetch) NewNativeFetchVM(t *common.IOContext, vm *goja.Runtime) *NativeFetcher {
 	fetcher := f.fetcherPool.Get().(*NativeFetcher)
 	fetcher.nativeWrapper.ioContext = t
-	fetcher.nativeWrapper.respPool = f.respPool
 
 	t.RegisterCleanup(func() {
-		fetcher.nativeWrapper.respPool = nil
 		fetcher.nativeWrapper.ioContext = nil
 		f.fetcherPool.Put(fetcher)
 	})

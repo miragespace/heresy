@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
@@ -139,9 +138,8 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 	}()
 
 	instance = &runtimeInstance{
-		logger:        rt.logger,
-		eventLoop:     eventLoop,
-		ioContextPool: common.NewIOContextPool(rt.logger, 10),
+		logger:    rt.logger,
+		eventLoop: eventLoop,
 	}
 
 	var options nativeHandlerOptions

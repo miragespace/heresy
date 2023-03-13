@@ -1,4 +1,4 @@
-package common
+package shared
 
 import (
 	"sync"
@@ -27,7 +27,7 @@ func (p *HeadersProxyPool) Get() *HeadersProxy {
 	return h
 }
 
-func (p *HeadersProxyPool) put(h *HeadersProxy) {
+func (p *HeadersProxyPool) Put(h *HeadersProxy) {
 	h.unsetHeader()
 	p.hdrPool.Put(h)
 }

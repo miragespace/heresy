@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/common/shared"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
@@ -15,10 +16,11 @@ type StreamController struct {
 	eventLoop      *eventloop.EventLoop
 	runtimeWrapper goja.Callable
 	streamPool     sync.Pool
+	respPool       sync.Pool
 }
 
 type ReadableStream struct {
-	nativeWrapper *common.NativeReaderWrapper
+	nativeWrapper *shared.NativeReaderWrapper
 	nativeStream  goja.Value
 }
 
@@ -49,7 +51,7 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 
 		s.streamPool = sync.Pool{
 			New: func() any {
-				wrapper := common.NewNativeReaderWrapper(vm, s.eventLoop)
+				wrapper := shared.NewNativeReaderWrapper(vm, s.eventLoop)
 				fn, err := s.runtimeWrapper(goja.Undefined(), wrapper.NativeObject())
 				if err != nil {
 					panic(fmt.Errorf("runtime panic: Failed to get native ReadableStream: %w", err))
@@ -62,6 +64,12 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 			},
 		}
 
+		s.respPool = sync.Pool{
+			New: func() any {
+				return newResponseProxy(vm, s)
+			},
+		}
+
 		setup <- nil
 	})
 
@@ -71,6 +79,14 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 	}
 
 	return s, nil
+}
+
+func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy {
+	resp := s.respPool.Get().(*ResponseProxy)
+	t.RegisterCleanup(func() {
+		s.respPool.Put(resp)
+	})
+	return resp
 }
 
 // func (s *StreamController) NewReadableStream(t *common.IOContext, r io.ReadCloser) *ReadableStream {
@@ -93,4 +109,17 @@ func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadClo
 	})
 
 	return stream
+}
+
+func AssertReader(native goja.Value, vm *goja.Runtime) (io.Reader, bool) {
+	obj := native.ToObject(vm)
+	wrapper := obj.Get("wrapper")
+	if wrapper == nil {
+		return nil, false
+	}
+	w, ok := wrapper.Export().(*shared.NativeReaderWrapper)
+	if ok {
+		return w.Reader(), true
+	}
+	return nil, false
 }

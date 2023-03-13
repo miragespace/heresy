@@ -8,6 +8,7 @@ import (
 	"go.miragespace.co/heresy/event"
 	"go.miragespace.co/heresy/express"
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/common/shared"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
@@ -101,9 +102,8 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 			return
 		})
 
-		headersPool := common.NewHeadersProxyPool(vm, symbols)
-		inst.ioContextPool.WithHeadersPool(headersPool)
-
+		headersPool := shared.NewHeadersProxyPool(vm, symbols)
+		inst.ioContextPool = common.NewIOContextPool(logger, headersPool, 10)
 		inst.contextPool = express.NewRequestContextPool(express.RequestContextDeps{
 			Logger:    logger,
 			Eventloop: inst.eventLoop,

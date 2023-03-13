@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/stream"
 
 	"github.com/dop251/goja"
 	pool "github.com/libp2p/go-buffer-pool"
@@ -15,10 +16,9 @@ import (
 type NativeFetchWrapper struct {
 	cfg       FetchConfig
 	ioContext *common.IOContext
-	respPool  *responseProxyPool
 }
 
-func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+func (f *NativeFetchWrapper) doFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	promise, resolve, reject := vm.NewPromise()
 	ret = vm.ToValue(promise)
 
@@ -27,16 +27,13 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		reqMethod                 = fc.Argument(1)
 		reqHeaders                = fc.Argument(2)
 		reqBody                   = fc.Argument(3)
-		result                    = f.respPool.Get()
+		result                    = f.cfg.Stream.GetResponseProxy(f.ioContext)
 		bodyType                  = reqBody.ExportType()
 		url        string         = reqURL.String()
 		method     string         = reqMethod.String()
 		headers    map[string]any = reqHeaders.Export().(map[string]any)
 		useBody    io.Reader      = nil
 	)
-	f.ioContext.RegisterCleanup(func() {
-		f.respPool.Put(result)
-	})
 
 	if goja.IsUndefined(reqBody) || goja.IsNull(reqBody) {
 		// no body
@@ -47,7 +44,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		useBody = strBuf
 	} else {
 		// possibly wrapped ReadableStream
-		reader, ok := common.AssertReader(reqBody, vm)
+		reader, ok := stream.AssertReader(reqBody, vm)
 		if !ok {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				reject(vm.NewGoError(ErrUnsupportedReadableStream))
@@ -88,7 +85,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		} else {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				result.WithResponse(f.ioContext, vm, resp)
-				resolve(result.nativeObj)
+				resolve(result.NativeObject())
 			})
 		}
 	}()

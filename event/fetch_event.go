@@ -8,6 +8,7 @@ import (
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/stream"
 
 	"github.com/dop251/goja"
 	pool "github.com/libp2p/go-buffer-pool"
@@ -243,7 +244,7 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			useBody = strBuf
 		} else {
 			// possibly wrapped ReadableStream
-			reader, ok := common.AssertReader(respBody, evt.vm)
+			reader, ok := stream.AssertReader(respBody, evt.vm)
 			if !ok {
 				panic(evt.vm.NewGoError(fetch.ErrUnsupportedReadableStream))
 			}
