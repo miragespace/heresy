@@ -65,6 +65,10 @@ const __runtimeFetch = (
 
 // this is a helper for FetchEvent.respondWith
 const __runtimeResponseHelper = async (response: Response) => {
+  if (!(response instanceof Response)) {
+    return [false];
+  }
+
   const { status, headers } = response;
 
   const rawHeadersMap: Record<string, string> = {};
@@ -80,5 +84,5 @@ const __runtimeResponseHelper = async (response: Response) => {
     useBody = await requestBody.text();
   }
 
-  return [status, rawHeadersMap, useBody];
+  return [true, status, rawHeadersMap, useBody];
 };

@@ -124,7 +124,7 @@ func (f *Fetch) GetResponseHelper() goja.Value {
 
 func (f *Fetch) NewNativeFetchVM(t *common.IOContext, vm *goja.Runtime) *NativeFetcher {
 	fetcher := f.fetcherPool.Get().(*NativeFetcher)
-	fetcher.nativeWrapper.WithIOContext(t)
+	fetcher.nativeWrapper.ioContext = t
 	fetcher.nativeWrapper.respPool = f.respPool
 
 	t.RegisterCleanup(func() {

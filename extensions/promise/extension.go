@@ -9,6 +9,7 @@ import (
 
 type PromiseResolver struct {
 	eventLoop                *eventloop.EventLoop
+	runtimeWarpperResult     goja.Callable
 	runtimeWrapperWithFunc   goja.Callable
 	runtimeWrapperWithSpread goja.Callable
 }
@@ -26,21 +27,33 @@ func NewResolver(eventLoop *eventloop.EventLoop) (*PromiseResolver, error) {
 			return
 		}
 
-		promiseResolver := vm.Get(promiseResolverFuncWithArgSymbol)
-		wrapper, ok := goja.AssertFunction(promiseResolver)
-		if !ok {
-			setup <- fmt.Errorf("internal error: %s is not a function", promiseResolverFuncWithArgSymbol)
-			return
+		// NOTE: this is better than running the same block of code 3 times
+		// trying to get the helper function out and assign it
+		for _, assignment := range []struct {
+			target *goja.Callable
+			name   string
+		}{
+			{
+				target: &t.runtimeWarpperResult,
+				name:   promiseResolverResultSymbol,
+			},
+			{
+				target: &t.runtimeWrapperWithFunc,
+				name:   promiseResolverFuncWithArgSymbol,
+			},
+			{
+				target: &t.runtimeWrapperWithSpread,
+				name:   promiseResolverFuncWithSpreadSymbol,
+			},
+		} {
+			promiseResolver := vm.Get(assignment.name)
+			wrapper, ok := goja.AssertFunction(promiseResolver)
+			if !ok {
+				setup <- fmt.Errorf("internal error: %s is not a function", assignment.name)
+				return
+			}
+			*assignment.target = wrapper
 		}
-		t.runtimeWrapperWithFunc = wrapper
-
-		promiseResolver = vm.Get(promiseResolverFuncWithSpreadSymbol)
-		wrapper, ok = goja.AssertFunction(promiseResolver)
-		if !ok {
-			setup <- fmt.Errorf("internal error: %s is not a function", promiseResolverFuncWithSpreadSymbol)
-			return
-		}
-		t.runtimeWrapperWithSpread = wrapper
 
 		setup <- nil
 	})
@@ -51,6 +64,19 @@ func NewResolver(eventLoop *eventloop.EventLoop) (*PromiseResolver, error) {
 	}
 
 	return t, nil
+}
+
+func (p *PromiseResolver) NewPromiseResultVM(
+	vm *goja.Runtime,
+	arg, resolve, reject goja.Value,
+) error {
+	_, err := p.runtimeWarpperResult(
+		goja.Undefined(),
+		arg,
+		resolve,
+		reject,
+	)
+	return err
 }
 
 func (p *PromiseResolver) NewPromiseFuncWithArg(
@@ -78,16 +104,16 @@ func (p *PromiseResolver) NewPromiseFuncWithArgVM(
 	return err
 }
 
-func (p *PromiseResolver) NewPromiseFuncWithSpread(
-	fn, arg, resolve, reject goja.Value,
-) error {
-	errCh := make(chan error, 1)
-	p.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-		errCh <- p.NewPromiseFuncWithSpreadVM(vm, fn, arg, resolve, reject)
-	})
+// func (p *PromiseResolver) NewPromiseFuncWithSpread(
+// 	fn, arg, resolve, reject goja.Value,
+// ) error {
+// 	errCh := make(chan error, 1)
+// 	p.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+// 		errCh <- p.NewPromiseFuncWithSpreadVM(vm, fn, arg, resolve, reject)
+// 	})
 
-	return <-errCh
-}
+// 	return <-errCh
+// }
 
 func (p *PromiseResolver) NewPromiseFuncWithSpreadVM(
 	vm *goja.Runtime,

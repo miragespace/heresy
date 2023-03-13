@@ -24,6 +24,9 @@ const __runtimeFetch = (goWrapper) => {
 };
 // this is a helper for FetchEvent.respondWith
 const __runtimeResponseHelper = async (response) => {
+    if (!(response instanceof Response)) {
+        return [false];
+    }
     const { status, headers } = response;
     const rawHeadersMap = {};
     headers.forEach((v, k) => {
@@ -37,5 +40,5 @@ const __runtimeResponseHelper = async (response) => {
     else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
         useBody = await requestBody.text();
     }
-    return [status, rawHeadersMap, useBody];
+    return [true, status, rawHeadersMap, useBody];
 };

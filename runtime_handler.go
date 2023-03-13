@@ -44,10 +44,9 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 	ioCtx := inst.ioContextPool.Get(r.Context())
 	defer inst.ioContextPool.Put(ioCtx)
 
-	ctx := inst.contextPool.Get()
-	defer inst.contextPool.Put(ctx)
+	ctx := inst.contextPool.Get(ioCtx)
 
-	ctx.WithHttp(w, r, next).WithIOContext(ioCtx)
+	ctx.WithHttp(w, r, next)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
@@ -72,10 +71,9 @@ func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Reques
 	ioCtx := inst.ioContextPool.Get(r.Context())
 	defer inst.ioContextPool.Put(ioCtx)
 
-	evt := inst.eventPool.Get()
-	defer inst.eventPool.Put(evt)
+	evt := inst.eventPool.Get(ioCtx)
 
-	evt.WithHttp(w, r, next).WithIOContext(ioCtx)
+	evt.WithHttp(w, r, next)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {

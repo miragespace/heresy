@@ -24,12 +24,52 @@ Heresy is a runtime to allow you to run JavaScript as middleware for `http.Serve
 | Web Streams API (`ReadableStream`, etc), backed by `io.Reader`/`io.Writer` |
 | Fetch API (`Headers`, `Request`, `Response`)                               |
 
-| **Component** | Status               | req/request                                                     | resp/respondWith                                                 | next  |
-|---------------|----------------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
-| Express.js    | WIP                  | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
-| FetchEvent    | Missing `.waitUntil` | Works                                                           | Works                                                            | Works |
-| Fetch API     | Implemented          |                                                                 |                                                                  |       |
+| **Component** | Status       | req/request                                                     | resp/respondWith                                                 | next  |
+|---------------|--------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
+| Express.js    | WIP          | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
+| FetchEvent    | Implemented* | Works                                                           | Works                                                            | Works |
+| Fetch API     | Implemented  |                                                                 |                                                                  |       |
 
+*: Even though ECMAScript is single-threaded in nature, heresy runtime manages data access and IOs asynchronously. Therefore, once your event handler returns, it should not call any methods from `FetchEvent`.
+
+The following usage will result in a race _and_ crash the runtime:
+```javascript
+function eventHandler(evt) {
+    // ...
+    evt.respondWith(/* ... */)
+    setTimeout(() => {
+        evt.fetch(/* ... */)
+    }, 100)
+    // evt.fetch will be called after your handler returns!
+}
+```
+
+Use `.waitUntil` instead:
+```javascript
+function eventHandler(evt) {
+    // ...
+    evt.respondWith(/* ... */)
+    evt.waitUntil((async () => {
+        // e.g. send request metrics
+        await evt.fetch(/* ... */)
+        await evt.fetch(/* ... */)
+    })())
+}
+```
+
+The first rule still applies if you use `.waitUntil` incorrectly. The following usage will also crash the runtime:
+```javascript
+function eventHandler(evt) {
+    // ...
+    evt.respondWith(/* ... */)
+    setTimeout(() => {
+        evt.waitUntil((async () => {
+            await evt.fetch(/* ... */)
+        })())
+    }, 100)
+    // evt.waitUntil will be called after your handler returns!
+}
+```
 
 ## Examples
 

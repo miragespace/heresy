@@ -3,6 +3,7 @@ package express
 import (
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
 
 	"github.com/dop251/goja"
@@ -44,11 +45,16 @@ func NewRequestContextPool(deps RequestContextDeps) *RequestContextPool {
 	return pool
 }
 
-func (p *RequestContextPool) Get() *RequestContext {
-	return p.ctxPool.Get().(*RequestContext)
+func (p *RequestContextPool) Get(t *common.IOContext) *RequestContext {
+	ctx := p.ctxPool.Get().(*RequestContext)
+	ctx.ioContext = t
+	t.RegisterCleanup(func() {
+		p.put(ctx)
+	})
+	return ctx
 }
 
-func (p *RequestContextPool) Put(ctx *RequestContext) {
+func (p *RequestContextPool) put(ctx *RequestContext) {
 	ctx.reset()
 	p.ctxPool.Put(ctx)
 }

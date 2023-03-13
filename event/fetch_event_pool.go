@@ -3,6 +3,7 @@ package event
 import (
 	"sync"
 
+	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
@@ -50,11 +51,16 @@ func NewFetchEventPool(deps FetchEventDeps) *FetchEventPool {
 	return pool
 }
 
-func (p *FetchEventPool) Get() *FetchEvent {
-	return p.evtPool.Get().(*FetchEvent)
+func (p *FetchEventPool) Get(t *common.IOContext) *FetchEvent {
+	f := p.evtPool.Get().(*FetchEvent)
+	f.ioContext = t
+	t.RegisterCleanup(func() {
+		p.put(f)
+	})
+	return f
 }
 
-func (p *FetchEventPool) Put(evt *FetchEvent) {
+func (p *FetchEventPool) put(evt *FetchEvent) {
 	evt.reset()
 	p.evtPool.Put(evt)
 }

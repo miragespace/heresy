@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	promiseResolverResultSymbol         = "__runtimeResolverResult"
 	promiseResolverFuncWithArgSymbol    = "__runtimeResolverFuncWithArg"
 	promiseResolverFuncWithSpreadSymbol = "__runtimeResolverFuncWithSpread"
 )

@@ -93,8 +93,8 @@ func (s *NativeReaderWrapper) ReadInto(fc goja.FunctionCall, vm *goja.Runtime) (
 		n, err := s.reader.Read(buf)
 		if err != nil && !errors.Is(err, io.EOF) {
 			s.reader.Close()
-			s.eventLoop.RunOnLoop(func(*goja.Runtime) {
-				reject(err)
+			s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+				reject(vm.NewGoError(err))
 			})
 		} else {
 			s.eventLoop.RunOnLoop(func(*goja.Runtime) {

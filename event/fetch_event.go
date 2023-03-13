@@ -1,7 +1,6 @@
 package event
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +25,7 @@ type FetchEvent struct {
 	nativeRequestReject   goja.Value
 	nativeResponseResolve goja.Value
 	nativeResponseReject  goja.Value
+	nativeConclude        goja.Value
 	requestDone           chan struct{}
 	responseDone          chan struct{}
 	deps                  FetchEventDeps
@@ -65,6 +65,7 @@ func (evt *FetchEvent) reset() {
 	evt.httpResp = nil
 	evt.httpNext = nil
 	evt.nativeFetch = nil
+	evt.nativeConclude = nil
 	evt.hasFetch = false
 	evt.skipNext = false
 	evt.useRespondWith = false
@@ -120,12 +121,6 @@ func (evt *FetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next htt
 	return evt
 }
 
-func (evt *FetchEvent) WithIOContext(t *common.IOContext) *FetchEvent {
-	evt.ioContext = t
-
-	return evt
-}
-
 func (evt *FetchEvent) EnableFetch() {
 	evt.hasFetch = true
 }
@@ -150,14 +145,40 @@ func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime)
 		evt.nativeResponseResolve,
 		evt.nativeResponseReject,
 	); err != nil {
-		panic(fmt.Errorf("runtime panic: Failed to execute spread resolver: %w", err))
+		panic(vm.NewGoError(fmt.Errorf("runtime panic: failed to register respondWith resolver: %w", err)))
 	}
 
 	return goja.Undefined()
 }
 
-func (evt *FetchEvent) nativeWaitUntil(fc goja.FunctionCall) goja.Value {
-	return goja.Undefined()
+func (evt *FetchEvent) nativeWaitUntil(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+	ret = goja.Undefined()
+
+	promise := fc.Argument(0)
+	if goja.IsUndefined(promise) {
+		panic(vm.NewTypeError("wailUntil: expecting 1 argument, got 0 argument"))
+	}
+	if _, ok := promise.Export().(*goja.Promise); !ok {
+		panic(vm.NewTypeError("waitUntil: expecting argument as a Promise"))
+	}
+
+	evt.ioContext.ExtendContext()
+	if evt.nativeConclude == nil {
+		evt.nativeConclude = vm.ToValue(func(goja.FunctionCall) goja.Value {
+			evt.ioContext.ConcludeExtend()
+			return goja.Undefined()
+		})
+	}
+	if err := evt.deps.Resolver.NewPromiseResultVM(
+		vm,
+		promise,
+		evt.nativeConclude,
+		evt.nativeConclude,
+	); err != nil {
+		panic(vm.NewGoError(fmt.Errorf("runtime panic: failed to register waitUntil resolver: %w", err)))
+	}
+
+	return
 }
 
 func (evt *FetchEvent) Wait() {
@@ -195,10 +216,18 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 		// NOTE: in the nested response resolver/rejector from .respondWith, we do not .wake()
 		// to unblock the http request in progress. Resolution should be done by the outer request resolver
 
+		if respOk := fc.Argument(0); !respOk.ToBoolean() {
+			// .respondWith did not resolve to a Response (e.g. undefined)
+			w.WriteHeader(http.StatusNoContent)
+			evt.responseSent = true
+			evt.responseDone <- struct{}{}
+			return
+		}
+
 		var (
-			respStatus                 = fc.Argument(0)
-			respHeaders                = fc.Argument(1)
-			respBody                   = fc.Argument(2)
+			respStatus                 = fc.Argument(1)
+			respHeaders                = fc.Argument(2)
+			respBody                   = fc.Argument(3)
 			bodyType                   = respBody.ExportType()
 			status      int64          = respStatus.ToInteger()
 			headers     map[string]any = respHeaders.Export().(map[string]any)
@@ -207,7 +236,7 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 
 		if goja.IsUndefined(respBody) || goja.IsNull(respBody) {
 			// no body
-			useBody = &bytes.Buffer{}
+			useBody = http.NoBody
 		} else if bodyType.Kind() == reflect.String {
 			strBuf := pool.NewBufferString(respBody.String())
 			evt.ioContext.RegisterCleanup(strBuf.Reset)
@@ -263,7 +292,11 @@ func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 
 			if evt.skipNext {
 				// .respondWith was used
-				<-evt.responseDone
+				select {
+				case <-r.Context().Done():
+					return
+				case <-evt.responseDone:
+				}
 			} else {
 				// fallthrough, .respondWith did not call
 				evt.httpNext.ServeHTTP(w, r)
@@ -282,7 +315,11 @@ func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 
 			if evt.skipNext {
 				// .respondWith was used, but exception thrown
-				<-evt.responseDone
+				select {
+				case <-r.Context().Done():
+					return
+				case <-evt.responseDone:
+				}
 			}
 
 			if evt.responseSent {

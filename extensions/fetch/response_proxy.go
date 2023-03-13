@@ -40,9 +40,10 @@ func (r *responseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp
 }
 
 func (r *responseProxy) reset() {
-	r.nativeBody = goja.Null()
-	r.headersProxy = nil
+	r.ioContext = nil
 	r.resp = nil
+	r.headersProxy = nil
+	r.nativeBody = goja.Null()
 }
 
 func (r *responseProxy) Get(key string) goja.Value {

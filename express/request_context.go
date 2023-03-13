@@ -110,12 +110,6 @@ func (ctx *RequestContext) WithHttp(w http.ResponseWriter, r *http.Request, next
 	return ctx
 }
 
-func (ctx *RequestContext) WithIOContext(t *common.IOContext) *RequestContext {
-	ctx.ioContext = t
-
-	return ctx
-}
-
 func (ctx *RequestContext) EnableFetch() {
 	ctx.hasFetch = true
 }

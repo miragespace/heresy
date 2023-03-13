@@ -18,13 +18,16 @@ import (
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/dop251/goja_nodejs/require"
 	"go.uber.org/zap"
+	"golang.org/x/sys/cpu"
 )
 
 type Runtime struct {
 	logger    *zap.Logger
 	transport http.RoundTripper
 	shards    []atomic.Pointer[runtimeInstance]
+	_         cpu.CacheLinePad
 	nextShard uint32
+	_         cpu.CacheLinePad
 	numShards int
 }
 
@@ -138,7 +141,7 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 	instance = &runtimeInstance{
 		logger:        rt.logger,
 		eventLoop:     eventLoop,
-		ioContextPool: common.NewIOContextPool(10),
+		ioContextPool: common.NewIOContextPool(rt.logger, 10),
 	}
 
 	var options nativeHandlerOptions

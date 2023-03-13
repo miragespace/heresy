@@ -89,7 +89,6 @@ func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadClo
 	t.TrackReader(stream.nativeWrapper)
 
 	t.RegisterCleanup(func() {
-		stream.nativeWrapper.WithReader(nil)
 		s.streamPool.Put(stream)
 	})
 

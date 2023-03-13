@@ -18,10 +18,6 @@ type NativeFetchWrapper struct {
 	respPool  *responseProxyPool
 }
 
-func (f *NativeFetchWrapper) WithIOContext(t *common.IOContext) {
-	f.ioContext = t
-}
-
 func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	promise, resolve, reject := vm.NewPromise()
 	ret = vm.ToValue(promise)
@@ -44,6 +40,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 
 	if goja.IsUndefined(reqBody) || goja.IsNull(reqBody) {
 		// no body
+		useBody = http.NoBody
 	} else if bodyType.Kind() == reflect.String {
 		strBuf := pool.NewBufferString(reqBody.String())
 		f.ioContext.RegisterCleanup(strBuf.Reset)
@@ -64,7 +61,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		err := f.ioContext.AcquireFetchToken()
 		if err != nil {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(err)
+				reject(vm.NewGoError(err))
 			})
 			return
 		}
@@ -73,7 +70,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		req, err := http.NewRequestWithContext(f.ioContext.Context(), method, url, useBody)
 		if err != nil {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(err)
+				reject(vm.NewGoError(err))
 			})
 			return
 		}
@@ -86,7 +83,7 @@ func (f *NativeFetchWrapper) DoFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		resp, err := f.cfg.Client.Do(req)
 		if err != nil {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(err)
+				reject(vm.NewGoError(err))
 			})
 		} else {
 			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
