@@ -139,7 +139,7 @@ func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime)
 	evt.skipNext = true
 	evt.useRespondWith = true
 
-	if err := evt.deps.Resolver.NewPromiseFuncWithSpreadVM(
+	if err := evt.deps.Resolver.NewPromiseFuncWithArgVM(
 		vm,
 		evt.deps.Fetch.GetResponseHelper(),
 		resp,
@@ -217,7 +217,11 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 		// NOTE: in the nested response resolver/rejector from .respondWith, we do not .wake()
 		// to unblock the http request in progress. Resolution should be done by the outer request resolver
 
-		if respOk := fc.Argument(0); !respOk.ToBoolean() {
+		var (
+			nativeResp = fc.Argument(0).ToObject(evt.vm)
+		)
+
+		if respOk := nativeResp.Get("ok"); !respOk.ToBoolean() {
 			// .respondWith did not resolve to a Response (e.g. undefined)
 			w.WriteHeader(http.StatusNoContent)
 			evt.responseSent = true
@@ -226,9 +230,9 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 		}
 
 		var (
-			respStatus                 = fc.Argument(1)
-			respHeaders                = fc.Argument(2)
-			respBody                   = fc.Argument(3)
+			respStatus                 = nativeResp.Get("status")
+			respHeaders                = nativeResp.Get("headers")
+			respBody                   = nativeResp.Get("body")
 			bodyType                   = respBody.ExportType()
 			status      int64          = respStatus.ToInteger()
 			headers     map[string]any = respHeaders.Export().(map[string]any)

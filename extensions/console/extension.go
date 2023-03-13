@@ -1,4 +1,4 @@
-package zap_console
+package console
 
 import (
 	"github.com/dop251/goja"

@@ -2,10 +2,6 @@
 const __runtimeFetch = (goWrapper) => {
     return async (input, options) => {
         const request = new Request(input, options);
-        const rawHeadersMap = {};
-        request.headers.forEach((v, k) => {
-            rawHeadersMap[k] = v;
-        });
         const requestBody = request;
         let useBody;
         if (requestBody._bodyReadableStream) {
@@ -14,7 +10,8 @@ const __runtimeFetch = (goWrapper) => {
         else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
             useBody = await requestBody.text();
         }
-        const { statusText, statusCode, header, body } = await goWrapper.doFetch(request.url, request.method, rawHeadersMap, useBody);
+        const { statusText, statusCode, header, body } = await goWrapper.doFetch(request.url, request.method, request.headers.map, // .map property is the backing storage of headers
+        useBody);
         return new Response(body, {
             status: statusCode,
             statusText: statusText,
@@ -25,13 +22,9 @@ const __runtimeFetch = (goWrapper) => {
 // this is a helper for FetchEvent.respondWith
 const __runtimeResponseHelper = async (response) => {
     if (!(response instanceof Response)) {
-        return [false];
+        return { ok: false };
     }
     const { status, headers } = response;
-    const rawHeadersMap = {};
-    headers.forEach((v, k) => {
-        rawHeadersMap[k] = v;
-    });
     const requestBody = response;
     let useBody;
     if (requestBody._bodyReadableStream) {
@@ -40,5 +33,6 @@ const __runtimeResponseHelper = async (response) => {
     else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
         useBody = await requestBody.text();
     }
-    return [true, status, rawHeadersMap, useBody];
+    // .map property is the backing storage of headers
+    return { ok: true, status, headers: headers.map, body: useBody };
 };

@@ -8,10 +8,9 @@ import (
 )
 
 type PromiseResolver struct {
-	eventLoop                *eventloop.EventLoop
-	runtimeWarpperResult     goja.Callable
-	runtimeWrapperWithFunc   goja.Callable
-	runtimeWrapperWithSpread goja.Callable
+	eventLoop              *eventloop.EventLoop
+	runtimeWarpperResult   goja.Callable
+	runtimeWrapperWithFunc goja.Callable
 }
 
 func NewResolver(eventLoop *eventloop.EventLoop) (*PromiseResolver, error) {
@@ -27,7 +26,7 @@ func NewResolver(eventLoop *eventloop.EventLoop) (*PromiseResolver, error) {
 			return
 		}
 
-		// NOTE: this is better than running the same block of code 3 times
+		// NOTE: this is better than running the same block of code N times
 		// trying to get the helper function out and assign it
 		for _, assignment := range []struct {
 			target *goja.Callable
@@ -40,10 +39,6 @@ func NewResolver(eventLoop *eventloop.EventLoop) (*PromiseResolver, error) {
 			{
 				target: &t.runtimeWrapperWithFunc,
 				name:   promiseResolverFuncWithArgSymbol,
-			},
-			{
-				target: &t.runtimeWrapperWithSpread,
-				name:   promiseResolverFuncWithSpreadSymbol,
 			},
 		} {
 			promiseResolver := vm.Get(assignment.name)
@@ -114,17 +109,3 @@ func (p *PromiseResolver) NewPromiseFuncWithArgVM(
 
 // 	return <-errCh
 // }
-
-func (p *PromiseResolver) NewPromiseFuncWithSpreadVM(
-	vm *goja.Runtime,
-	fn, arg, resolve, reject goja.Value,
-) error {
-	_, err := p.runtimeWrapperWithSpread(
-		goja.Undefined(),
-		fn,
-		arg,
-		resolve,
-		reject,
-	)
-	return err
-}

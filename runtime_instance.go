@@ -9,10 +9,10 @@ import (
 	"go.miragespace.co/heresy/express"
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
+	"go.miragespace.co/heresy/extensions/console"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
-	"go.miragespace.co/heresy/extensions/zap_console"
 	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
@@ -70,7 +70,7 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		url.Enable(vm)
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-		vm.Set("console", require.Require(vm, zap_console.ModuleName))
+		vm.Set("console", require.Require(vm, console.ModuleName))
 
 		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()

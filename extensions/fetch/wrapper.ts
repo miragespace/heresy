@@ -35,11 +35,6 @@ const __runtimeFetch = (
   ): Promise<Response> => {
     const request = new Request(input, options);
 
-    const rawHeadersMap: Record<string, string> = {};
-    request.headers.forEach((v: string, k: string) => {
-      rawHeadersMap[k] = v;
-    });
-
     const requestBody = request as Body;
     let useBody: ReadableStream | string | undefined;
     if (requestBody._bodyReadableStream) {
@@ -51,7 +46,7 @@ const __runtimeFetch = (
     const { statusText, statusCode, header, body } = await goWrapper.doFetch(
       request.url,
       request.method,
-      rawHeadersMap,
+      (request.headers as any).map, // .map property is the backing storage of headers
       useBody
     );
 
@@ -66,15 +61,10 @@ const __runtimeFetch = (
 // this is a helper for FetchEvent.respondWith
 const __runtimeResponseHelper = async (response: Response) => {
   if (!(response instanceof Response)) {
-    return [false];
+    return { ok: false };
   }
 
   const { status, headers } = response;
-
-  const rawHeadersMap: Record<string, string> = {};
-  headers.forEach((v: string, k: string) => {
-    rawHeadersMap[k] = v;
-  });
 
   const requestBody = response as Body;
   let useBody: ReadableStream | string | undefined;
@@ -84,5 +74,6 @@ const __runtimeResponseHelper = async (response: Response) => {
     useBody = await requestBody.text();
   }
 
-  return [true, status, rawHeadersMap, useBody];
+  // .map property is the backing storage of headers
+  return { ok: true, status, headers: (headers as any).map, body: useBody };
 };

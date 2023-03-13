@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.miragespace.co/heresy/extensions/console"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
-	"go.miragespace.co/heresy/extensions/zap_console"
 	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
@@ -88,8 +88,8 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 	for i := range rt.shards {
 		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
-		loggerModule := zap_console.RequireWithLogger(rt.logger)
-		registry.RegisterNativeModule(zap_console.ModuleName, loggerModule)
+		loggerModule := console.RequireWithLogger(rt.logger)
+		registry.RegisterNativeModule(console.ModuleName, loggerModule)
 
 		instance, err := rt.getInstance(rt.transport, registry)
 		if err != nil {
