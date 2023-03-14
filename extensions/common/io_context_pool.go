@@ -2,31 +2,39 @@ package common
 
 import (
 	"context"
-	"sync"
+	"expvar"
 
 	"go.miragespace.co/heresy/extensions/common/shared"
+	"go.miragespace.co/heresy/extensions/common/x"
 
 	"go.uber.org/zap"
 )
 
+var (
+	ctxPoolNew = expvar.NewInt("ioContext.New")
+	ctxPoolPut = expvar.NewInt("ioContext.Put")
+)
+
 type IOContextPool struct {
-	ctxPool sync.Pool
+	ctxPool *x.Pool[*IOContext]
 	hdrPool *shared.HeadersProxyPool
 }
 
 func NewIOContextPool(logger *zap.Logger, hp *shared.HeadersProxyPool, concurrent int64) *IOContextPool {
-	return &IOContextPool{
-		ctxPool: sync.Pool{
-			New: func() any {
-				return newIOContext(logger, concurrent)
-			},
-		},
+	ctxp := &IOContextPool{
 		hdrPool: hp,
 	}
+	ctxp.ctxPool = x.NewPool[*IOContext](x.DefaultPoolCapacity).
+		WithFactory(func() *IOContext {
+			ctxPoolNew.Add(1)
+			return newIOContext(logger, concurrent)
+		})
+
+	return ctxp
 }
 
 func (p *IOContextPool) Get(ctx context.Context) *IOContext {
-	t := p.ctxPool.Get().(*IOContext)
+	t := p.ctxPool.Get()
 	t.extendedCtx, t.extendedCtxCancel = context.WithCancel(context.Background())
 	t.reqCtx = ctx
 	t.hdrPool = p.hdrPool
@@ -35,6 +43,7 @@ func (p *IOContextPool) Get(ctx context.Context) *IOContext {
 }
 
 func (p *IOContextPool) Put(t *IOContext) {
+	go t.wait()
 	go func() {
 		t.release()
 		t.hdrPool = nil
@@ -42,5 +51,6 @@ func (p *IOContextPool) Put(t *IOContext) {
 		t.extendedCtxCancel = nil
 		t.extendedCtx = nil
 		p.ctxPool.Put(t)
+		ctxPoolPut.Add(1)
 	}()
 }

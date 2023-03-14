@@ -1,22 +1,31 @@
 package stream
 
 import (
+	"expvar"
 	"fmt"
 	"io"
-	"sync"
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
+	"go.miragespace.co/heresy/extensions/common/x"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
 
+var (
+	wrapperNew = expvar.NewInt("readerWrapper.New")
+	wrapperPut = expvar.NewInt("readerWrapper.Put")
+	respNew    = expvar.NewInt("responseProxy.New")
+	respPut    = expvar.NewInt("responseProxy.Put")
+)
+
 type StreamController struct {
 	eventLoop      *eventloop.EventLoop
 	runtimeWrapper goja.Callable
-	streamPool     sync.Pool
-	respPool       sync.Pool
+	streamPool     *x.Pool[*ReadableStream]
+	respPool       *x.Pool[*ResponseProxy]
 }
 
 type ReadableStream struct {
@@ -28,7 +37,7 @@ func (r *ReadableStream) NativeStream() goja.Value {
 	return r.nativeStream
 }
 
-func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
+func NewController(eventLoop *eventloop.EventLoop, symbols *polyfill.RuntimeSymbols) (*StreamController, error) {
 	s := &StreamController{
 		eventLoop: eventLoop,
 	}
@@ -49,26 +58,20 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 		}
 		s.runtimeWrapper = wrapper
 
-		s.streamPool = sync.Pool{
-			New: func() any {
+		s.streamPool = x.NewPool[*ReadableStream](x.DefaultPoolCapacity).
+			WithFactory(func() *ReadableStream {
+				wrapperNew.Add(1)
 				wrapper := shared.NewNativeReaderWrapper(vm, s.eventLoop)
-				fn, err := s.runtimeWrapper(goja.Undefined(), wrapper.NativeObject())
-				if err != nil {
-					panic(fmt.Errorf("runtime panic: Failed to get native ReadableStream: %w", err))
-				}
-
 				return &ReadableStream{
 					nativeWrapper: wrapper,
-					nativeStream:  fn,
 				}
-			},
-		}
+			})
 
-		s.respPool = sync.Pool{
-			New: func() any {
-				return newResponseProxy(vm, s)
-			},
-		}
+		s.respPool = x.NewPool[*ResponseProxy](x.DefaultPoolCapacity).
+			WithFactory(func() *ResponseProxy {
+				respNew.Add(1)
+				return newResponseProxy(vm, s, symbols)
+			})
 
 		setup <- nil
 	})
@@ -82,9 +85,10 @@ func NewController(eventLoop *eventloop.EventLoop) (*StreamController, error) {
 }
 
 func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy {
-	resp := s.respPool.Get().(*ResponseProxy)
+	resp := s.respPool.Get()
 	t.RegisterCleanup(func() {
 		s.respPool.Put(resp)
+		respPut.Add(1)
 	})
 	return resp
 }
@@ -100,12 +104,21 @@ func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy 
 // }
 
 func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadCloser, vm *goja.Runtime) *ReadableStream {
-	stream := s.streamPool.Get().(*ReadableStream)
+	stream := s.streamPool.Get()
 	stream.nativeWrapper.WithReader(r)
 	t.TrackReader(stream.nativeWrapper)
 
+	// unfortunately, ReadableStream itself cannot be reused. we have to create one every time.
+	fn, err := s.runtimeWrapper(goja.Undefined(), stream.nativeWrapper.NativeObject())
+	if err != nil {
+		panic(fmt.Errorf("runtime panic: Failed to get native ReadableStream: %w", err))
+	}
+	stream.nativeStream = fn
+
 	t.RegisterCleanup(func() {
+		stream.nativeStream = nil
 		s.streamPool.Put(stream)
+		wrapperPut.Add(1)
 	})
 
 	return stream

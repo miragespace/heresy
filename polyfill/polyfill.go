@@ -11,6 +11,7 @@ import (
 const (
 	RuntimeFetchEventInstanceSymbol = "__runtimeFetchEventInstance"
 	RuntimeRequestInstanceSymbol    = "__runtimeRequestInstance"
+	RuntimeResponseInstanceSymbol   = "__runtimeResponseInstance"
 )
 
 //go:embed node_modules/*
@@ -22,17 +23,37 @@ var polyfillScript string
 var polyfillProg = goja.MustCompile("polyfill", polyfillScript, true)
 
 type RuntimeSymbols struct {
-	nativeRequestInstance    *goja.Object
-	nativeFetchEventInstance *goja.Object
-	nativeHeadersConstructor goja.Constructor
+	nativeRequestInstancePrototype    *goja.Object
+	nativeResponseInstancePrototype   *goja.Object
+	nativeFetchEventInstancePrototype *goja.Object
+	nativeRequestInstance             *goja.Object
+	nativeResponseInstance            *goja.Object
+	nativeFetchEventInstance          *goja.Object
+	nativeHeadersConstructor          goja.Constructor
 }
 
 func (r *RuntimeSymbols) Request() *goja.Object {
 	return r.nativeRequestInstance
 }
 
+func (r *RuntimeSymbols) RequestPrototype() *goja.Object {
+	return r.nativeRequestInstancePrototype
+}
+
+func (r *RuntimeSymbols) Response() *goja.Object {
+	return r.nativeResponseInstance
+}
+
+func (r *RuntimeSymbols) ResponsePrototype() *goja.Object {
+	return r.nativeResponseInstancePrototype
+}
+
 func (r *RuntimeSymbols) FetchEvent() *goja.Object {
 	return r.nativeFetchEventInstance
+}
+
+func (r *RuntimeSymbols) FetchEventPrototype() *goja.Object {
+	return r.nativeFetchEventInstancePrototype
 }
 
 func (r *RuntimeSymbols) Headers() goja.Constructor {
@@ -48,19 +69,38 @@ func PolyfillRuntime(eventLoop *eventloop.EventLoop) (s *RuntimeSymbols, err err
 			return
 		}
 
-		reqeustInstance := vm.Get(RuntimeRequestInstanceSymbol)
-		if goja.IsUndefined(reqeustInstance) {
-			setup <- fmt.Errorf("polyfill symbols not found, please check if polyfill is configured correctly")
-			return
-		}
-		nativeRequestInstance := reqeustInstance.ToObject(vm)
+		s = &RuntimeSymbols{}
 
-		fetchEventInstance := vm.Get(RuntimeFetchEventInstanceSymbol)
-		if goja.IsUndefined(fetchEventInstance) {
-			setup <- fmt.Errorf("polyfill symbols not found, please check if polyfill is configured correctly")
-			return
+		for _, assignment := range []struct {
+			target **goja.Object
+			proto  **goja.Object
+			name   string
+		}{
+			{
+				target: &s.nativeRequestInstance,
+				proto:  &s.nativeRequestInstancePrototype,
+				name:   RuntimeRequestInstanceSymbol,
+			},
+			{
+				target: &s.nativeResponseInstance,
+				proto:  &s.nativeResponseInstancePrototype,
+				name:   RuntimeResponseInstanceSymbol,
+			},
+			{
+				target: &s.nativeFetchEventInstance,
+				proto:  &s.nativeFetchEventInstancePrototype,
+				name:   RuntimeFetchEventInstanceSymbol,
+			},
+		} {
+			instance := vm.Get(assignment.name)
+			if goja.IsUndefined(instance) {
+				setup <- fmt.Errorf("polyfill symbols not found, please check if polyfill is configured correctly")
+				return
+			}
+			obj := instance.ToObject(vm)
+			*assignment.target = obj
+			*assignment.proto = obj.Prototype()
 		}
-		nativeEvtInstance := fetchEventInstance.ToObject(vm)
 
 		headesrClass := vm.Get("Headers")
 		headersConstructor, ok := goja.AssertConstructor(headesrClass)
@@ -68,12 +108,7 @@ func PolyfillRuntime(eventLoop *eventloop.EventLoop) (s *RuntimeSymbols, err err
 			setup <- fmt.Errorf("runtime panic: Headers is not a constructor, please check if polyfill is configured correctly")
 			return
 		}
-
-		s = &RuntimeSymbols{
-			nativeRequestInstance:    nativeRequestInstance,
-			nativeFetchEventInstance: nativeEvtInstance,
-			nativeHeadersConstructor: headersConstructor,
-		}
+		s.nativeHeadersConstructor = headersConstructor
 
 		setup <- nil
 	})

@@ -72,7 +72,7 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 		vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
 		vm.Set("console", require.Require(vm, console.ModuleName))
 
-		vm.Set("registerMiddlewareHandler", func(fc goja.FunctionCall) (ret goja.Value) {
+		vm.Set("registerExpressHandler", func(fc goja.FunctionCall) (ret goja.Value) {
 			ret = goja.Undefined()
 
 			opt := fc.Argument(1)

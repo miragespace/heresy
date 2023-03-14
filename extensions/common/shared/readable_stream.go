@@ -20,7 +20,7 @@ type NativeReaderWrapper struct {
 	_size     goja.Value
 }
 
-var keys = []string{"bufferSize"}
+var readerWrapperKeys = []string{"bufferSize"}
 
 var _ goja.DynamicObject = (*NativeReaderWrapper)(nil)
 
@@ -74,7 +74,12 @@ func (s *NativeReaderWrapper) Set(key string, val goja.Value) bool {
 }
 
 func (s *NativeReaderWrapper) Has(key string) bool {
-	return !goja.IsUndefined(s.Get(key))
+	for _, k := range readerWrapperKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *NativeReaderWrapper) Delete(key string) bool {
@@ -82,7 +87,7 @@ func (s *NativeReaderWrapper) Delete(key string) bool {
 }
 
 func (s *NativeReaderWrapper) Keys() []string {
-	return keys
+	return readerWrapperKeys
 }
 
 func (s *NativeReaderWrapper) readInto(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {

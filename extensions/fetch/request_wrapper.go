@@ -73,7 +73,11 @@ func (f *NativeFetchWrapper) doFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		}
 
 		for k, v := range headers {
-			req.Header.Set(k, fmt.Sprintf("%s", v))
+			if s, ok := v.(string); ok {
+				req.Header.Set(k, s)
+			} else {
+				req.Header.Set(k, fmt.Sprintf("%s", v))
+			}
 		}
 		req.Header.Set("user-agent", UserAgent)
 

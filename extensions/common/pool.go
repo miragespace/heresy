@@ -1,9 +1,9 @@
 package common
 
 import (
-	pool "github.com/libp2p/go-buffer-pool"
-
 	"go.miragespace.co/heresy/extensions/common/shared"
+
+	pool "github.com/libp2p/go-buffer-pool"
 )
 
 func GetBuffer() []byte {

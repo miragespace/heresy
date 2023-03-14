@@ -6,6 +6,7 @@
 *.dylib
 build/
 extensions/node_modules
+/pprof.*
 
 # Test binary, built with `go test -c`
 *.test

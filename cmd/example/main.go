@@ -9,11 +9,8 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
-	"strings"
-	"time"
 
 	"go.miragespace.co/heresy"
-	"go.miragespace.co/heresy/transpile"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -95,25 +92,13 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 		}
 
 		var script string
-		if strings.HasSuffix(p.FileName(), ".ts") {
-			// transpile typescript
-			tCtx, tCancel := context.WithTimeout(r.Context(), time.Second*5)
-			defer tCancel()
-			script, err = transpile.TranspileTypescript(tCtx, p)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, "Failed to transpile TypeScript: %v", err)
-				return
-			}
-		} else {
-			scriptBytes, err := io.ReadAll(p)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, "Failed to read script from body: %v", err)
-				return
-			}
-			script = string(scriptBytes)
+		scriptBytes, err := io.ReadAll(p)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "Failed to read script from body: %v", err)
+			return
 		}
+		script = string(scriptBytes)
 
 		err = rt.LoadScript(p.FileName(), script, true)
 		if err != nil {

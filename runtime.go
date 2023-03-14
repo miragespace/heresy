@@ -60,8 +60,8 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 	}
 
 	logger.Info("Heresy runtime configured",
-		zap.Int("scheduler.maxWorkers", 100),
-		zap.Int("shards", shards),
+		zap.Int("io.outbound", 10),
+		zap.Int("runtime.shards", shards),
 	)
 
 	return rt, nil
@@ -157,7 +157,7 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 		return
 	}
 
-	instance.stream, err = stream.NewController(eventLoop)
+	instance.stream, err = stream.NewController(eventLoop, symbols)
 	if err != nil {
 		return
 	}

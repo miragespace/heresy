@@ -27,6 +27,8 @@ type FetchEvent struct {
 	nativeResponseResolve goja.Value
 	nativeResponseReject  goja.Value
 	nativeConclude        goja.Value
+	nativeRespondWith     goja.Value
+	nativeWailUntil       goja.Value
 	requestDone           chan struct{}
 	responseDone          chan struct{}
 	deps                  FetchEventDeps
@@ -41,6 +43,8 @@ type FetchEvent struct {
 
 var _ goja.DynamicObject = (*FetchEvent)(nil)
 
+var eventProperties = []string{"request"}
+
 func newFetchEvent(vm *goja.Runtime, deps FetchEventDeps) *FetchEvent {
 	evt := &FetchEvent{
 		nativeEvtInstance: deps.Symbols.FetchEvent(),
@@ -50,13 +54,10 @@ func newFetchEvent(vm *goja.Runtime, deps FetchEventDeps) *FetchEvent {
 		vm:                vm,
 	}
 
-	evt.requestProxy = newFetchEventRequest(evt)
 	evt.nativeRequestResolve = evt.getNativeRequestResolver()
 	evt.nativeRequestReject = evt.getNativeRequestRejector()
-	evt.nativeResponseResolve = evt.getNativeResponseResolver()
-	evt.nativeResponseReject = evt.getNativeResponseRejector()
 	evt.nativeEvt = evt.vm.NewDynamicObject(evt)
-	evt.nativeEvt.SetPrototype(evt.nativeEvtInstance.Prototype())
+	evt.nativeEvt.SetPrototype(deps.Symbols.FetchEventPrototype())
 
 	return evt
 }
@@ -66,26 +67,30 @@ func (evt *FetchEvent) reset() {
 	evt.httpResp = nil
 	evt.httpNext = nil
 	evt.nativeFetch = nil
-	evt.nativeConclude = nil
 	evt.hasFetch = false
 	evt.skipNext = false
 	evt.useRespondWith = false
 	evt.responseSent = false
-	evt.requestProxy.reset()
+	if evt.requestProxy != nil {
+		evt.requestProxy.reset()
+	}
 	evt.ioContext = nil
 }
 
 func (evt *FetchEvent) Get(key string) goja.Value {
 	switch key {
 	case "respondWith":
-		return evt.vm.ToValue(evt.nativeRespondWith)
+		if evt.nativeRespondWith == nil {
+			evt.nativeRespondWith = evt.vm.ToValue(evt.respondWith)
+		}
+		return evt.nativeRespondWith
 	case "waitUntil":
-		return evt.vm.ToValue(evt.nativeWaitUntil)
-	case "request":
-		return evt.requestProxy.nativeReq
+		if evt.nativeWailUntil == nil {
+			evt.nativeWailUntil = evt.vm.ToValue(evt.waitUntil)
+		}
+		return evt.nativeWailUntil
 	case "fetch":
 		if evt.hasFetch {
-			// lazy initialization
 			if evt.nativeFetch == nil {
 				fetcher := evt.deps.Fetch.NewNativeFetchVM(evt.ioContext, evt.vm)
 				evt.nativeFetch = fetcher.NativeFunc()
@@ -93,6 +98,13 @@ func (evt *FetchEvent) Get(key string) goja.Value {
 			return evt.nativeFetch
 		}
 		fallthrough
+
+	case "request":
+		if evt.requestProxy == nil {
+			evt.requestProxy = newFetchEventRequest(evt)
+		}
+		return evt.requestProxy.nativeReq
+
 	default:
 		return evt.nativeEvtInstance.Get(key)
 	}
@@ -103,7 +115,12 @@ func (evt *FetchEvent) Set(key string, val goja.Value) bool {
 }
 
 func (evt *FetchEvent) Has(key string) bool {
-	return !goja.IsUndefined(evt.Get(key))
+	for _, k := range eventProperties {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (evt *FetchEvent) Delete(key string) bool {
@@ -111,7 +128,7 @@ func (evt *FetchEvent) Delete(key string) bool {
 }
 
 func (evt *FetchEvent) Keys() []string {
-	return []string{"request"}
+	return eventProperties
 }
 
 func (evt *FetchEvent) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *FetchEvent {
@@ -126,7 +143,7 @@ func (evt *FetchEvent) EnableFetch() {
 	evt.hasFetch = true
 }
 
-func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
+func (evt *FetchEvent) respondWith(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
 	resp := fc.Argument(0)
 	if goja.IsUndefined(resp) {
 		panic(vm.NewTypeError("respondWith: expecting 1 argument, got 0 argument"))
@@ -136,8 +153,15 @@ func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime)
 		panic(vm.NewTypeError("respondWith: already called"))
 	}
 
-	evt.skipNext = true
 	evt.useRespondWith = true
+	evt.skipNext = true
+
+	if evt.nativeResponseResolve == nil {
+		evt.nativeResponseResolve = evt.getNativeResponseResolver()
+	}
+	if evt.nativeResponseReject == nil {
+		evt.nativeResponseReject = evt.getNativeResponseRejector()
+	}
 
 	if err := evt.deps.Resolver.NewPromiseFuncWithArgVM(
 		vm,
@@ -152,7 +176,7 @@ func (evt *FetchEvent) nativeRespondWith(fc goja.FunctionCall, vm *goja.Runtime)
 	return goja.Undefined()
 }
 
-func (evt *FetchEvent) nativeWaitUntil(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+func (evt *FetchEvent) waitUntil(fc goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
 	ret = goja.Undefined()
 
 	promise := fc.Argument(0)
@@ -164,12 +188,14 @@ func (evt *FetchEvent) nativeWaitUntil(fc goja.FunctionCall, vm *goja.Runtime) (
 	}
 
 	evt.ioContext.ExtendContext()
+
 	if evt.nativeConclude == nil {
 		evt.nativeConclude = vm.ToValue(func(goja.FunctionCall) goja.Value {
 			evt.ioContext.ConcludeExtend()
 			return goja.Undefined()
 		})
 	}
+
 	if err := evt.deps.Resolver.NewPromiseResultVM(
 		vm,
 		promise,
@@ -184,6 +210,10 @@ func (evt *FetchEvent) nativeWaitUntil(fc goja.FunctionCall, vm *goja.Runtime) (
 
 func (evt *FetchEvent) Wait() {
 	<-evt.requestDone
+}
+
+func (evt *FetchEvent) wake() {
+	evt.requestDone <- struct{}{}
 }
 
 func (evt *FetchEvent) NativeObject() goja.Value {
@@ -223,8 +253,8 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 
 		if respOk := nativeResp.Get("ok"); !respOk.ToBoolean() {
 			// .respondWith did not resolve to a Response (e.g. undefined)
-			w.WriteHeader(http.StatusNoContent)
 			evt.responseSent = true
+			w.WriteHeader(http.StatusNoContent)
 			evt.responseDone <- struct{}{}
 			return
 		}
@@ -257,19 +287,22 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 
 		go func() {
 			for k, v := range headers {
-				w.Header().Set(k, fmt.Sprintf("%s", v))
+				if s, ok := v.(string); ok {
+					w.Header().Set(k, s)
+				} else {
+					w.Header().Set(k, fmt.Sprintf("%s", v))
+				}
 			}
 
 			buf := common.GetBuffer()
 			defer common.PutBuffer(buf)
 
+			evt.responseSent = true
 			w.WriteHeader(int(status))
 			_, err := io.CopyBuffer(w, useBody, buf)
 			if err != nil {
 				evt.deps.Logger.Error("Error writing response", zap.Error(err))
 			}
-
-			evt.responseSent = true
 			evt.responseDone <- struct{}{}
 		}()
 	})
@@ -297,16 +330,12 @@ func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 
 			if evt.skipNext {
 				// .respondWith was used
-				select {
-				case <-r.Context().Done():
-					return
-				case <-evt.responseDone:
-				}
+				<-evt.responseDone
 			} else {
 				// fallthrough, .respondWith did not call
+				evt.responseSent = true
 				evt.httpNext.ServeHTTP(w, r)
 			}
-			evt.responseSent = true
 		}()
 	})
 }
@@ -320,11 +349,7 @@ func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 
 			if evt.skipNext {
 				// .respondWith was used, but exception thrown
-				select {
-				case <-r.Context().Done():
-					return
-				case <-evt.responseDone:
-				}
+				<-evt.responseDone
 			}
 
 			if evt.responseSent {
@@ -332,9 +357,9 @@ func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 				return
 			}
 
+			evt.responseSent = true
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Execution exception: %+v", v)
-			evt.responseSent = true
 		}()
 	})
 }
@@ -346,8 +371,4 @@ func (evt *FetchEvent) nativeFunctionWrapper(
 		fn(evt.httpResp, evt.httpReq, fc)
 		return goja.Undefined()
 	})
-}
-
-func (evt *FetchEvent) wake() {
-	evt.requestDone <- struct{}{}
 }

@@ -9,4 +9,4 @@ function httpHandler(ctx) {
     }
 }
 
-registerMiddlewareHandler(httpHandler)
+registerExpressHandler(httpHandler)

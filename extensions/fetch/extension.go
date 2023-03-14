@@ -1,15 +1,21 @@
 package fetch
 
 import (
+	"expvar"
 	"fmt"
 	"net/http"
-	"sync"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/common/x"
 	"go.miragespace.co/heresy/extensions/stream"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
+)
+
+var (
+	fetcherNew = expvar.NewInt("fetcher.New")
+	fetcherPut = expvar.NewInt("fetcher.Put")
 )
 
 const UserAgent = "heresy-runtime/fetcher"
@@ -20,7 +26,7 @@ type Fetch struct {
 	FetchConfig
 	runtimeFetchWrapper  goja.Callable
 	runtimeReponseHelper goja.Value
-	fetcherPool          sync.Pool
+	fetcherPool          *x.Pool[*NativeFetcher]
 }
 
 type FetchConfig struct {
@@ -79,8 +85,9 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 		promiseResolver = vm.Get(responseHelperSymbol)
 		f.runtimeReponseHelper = promiseResolver
 
-		f.fetcherPool = sync.Pool{
-			New: func() any {
+		f.fetcherPool = x.NewPool[*NativeFetcher](x.DefaultPoolCapacity).
+			WithFactory(func() *NativeFetcher {
+				fetcherNew.Add(1)
 				wrapper := &NativeFetchWrapper{
 					cfg: f.FetchConfig,
 				}
@@ -94,8 +101,8 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 					nativeWrapper: wrapper,
 					nativeFunc:    fn,
 				}
-			},
-		}
+			})
+
 		setup <- nil
 	})
 
@@ -120,12 +127,13 @@ func (f *Fetch) GetResponseHelper() goja.Value {
 // }
 
 func (f *Fetch) NewNativeFetchVM(t *common.IOContext, vm *goja.Runtime) *NativeFetcher {
-	fetcher := f.fetcherPool.Get().(*NativeFetcher)
+	fetcher := f.fetcherPool.Get()
 	fetcher.nativeWrapper.ioContext = t
 
 	t.RegisterCleanup(func() {
 		fetcher.nativeWrapper.ioContext = nil
 		f.fetcherPool.Put(fetcher)
+		fetcherPut.Add(1)
 	})
 
 	return fetcher

@@ -7,7 +7,7 @@ function randomNumber(ctx: MiddlewareContext) {
 		.end(`Hi ${req.ip}, here's a random number: ${Math.random()}`)
 }
 
-registerMiddlewareHandler(randomNumber)
+registerExpressHandler(randomNumber)
 
 // heresy runtime types. similar to Express.js
 type MiddlewareRequest = {
@@ -47,4 +47,4 @@ type MiddlewareOptions = {
 	fetch: boolean
 }
 
-declare function registerMiddlewareHandler(handler: MiddlewareHandler, options?: MiddlewareOptions): void
+declare function registerExpressHandler(handler: MiddlewareHandler, options?: MiddlewareOptions): void
