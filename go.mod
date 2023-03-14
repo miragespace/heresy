@@ -3,16 +3,18 @@ module go.miragespace.co/heresy
 go 1.20
 
 require (
-	github.com/clarkmcc/go-typescript v0.6.1-0.20230128012413-d346b08416e4
 	github.com/dop251/goja v0.0.0-20230304130813-e2f543bf4b4c
 	github.com/dop251/goja_nodejs v0.0.0-20230226152057-060fa99b809f
 	github.com/go-chi/chi/v5 v5.0.8
 	github.com/libp2p/go-buffer-pool v0.1.0
+	github.com/puzpuzpuz/xsync/v2 v2.4.0
 	github.com/stretchr/testify v1.8.2
 	go.uber.org/zap v1.24.0
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
 	golang.org/x/sys v0.6.0
 )
+
+replace github.com/dop251/goja => github.com/miragespace/goja v0.0.0-20230314063533-2c5cc6661cea
 
 require (
 	github.com/benbjohnson/clock v1.3.0 // indirect

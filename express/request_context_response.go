@@ -11,44 +11,64 @@ import (
 
 type contextResponse struct {
 	*RequestContext
-	nativeRes  *goja.Object
-	statusCode int
+	nativeRes       *goja.Object
+	nativeRespFuncs map[string]goja.Value
+	statusCode      int
 }
 
 var _ goja.DynamicObject = (*contextResponse)(nil)
 
+var responseProperties = []string{"headersSent"}
+
 func newContextResponse(ctx *RequestContext) *contextResponse {
 	res := &contextResponse{
-		RequestContext: ctx,
+		RequestContext:  ctx,
+		nativeRespFuncs: map[string]goja.Value{},
+		statusCode:      http.StatusNoContent,
 	}
-	res.reset()
 	res.nativeRes = ctx.vm.NewDynamicObject(res)
 	return res
 }
 
-func (res *contextResponse) Get(key string) goja.Value {
+func (res *contextResponse) initFunction(key string) {
+	var val goja.Value
 	switch key {
 	case "status":
-		return res.vm.ToValue(res.nativeStatus)
+		val = res.vm.ToValue(res.status)
 	case "send":
-		return res.vm.ToValue(res.nativeSend)
+		val = res.vm.ToValue(res.send)
 	case "json":
-		return res.vm.ToValue(res.nativeJson)
+		val = res.vm.ToValue(res.json)
 	case "get":
-		return res.vm.ToValue(res.nativeGet)
+		val = res.vm.ToValue(res.get)
 	case "end":
-		return res.vm.ToValue(res.nativeEnd)
+		val = res.vm.ToValue(res.end)
 	case "set":
 		fallthrough
 	case "header":
-		return res.vm.ToValue(res.nativeSet)
-
-	case "headersSent":
-		return res.vm.ToValue(res.responseSent)
-
-	default:
-		return goja.Undefined()
+		val = res.vm.ToValue(res.set)
 	}
+	if val != nil {
+		res.nativeRespFuncs[key] = val
+	}
+}
+
+func (res *contextResponse) Get(key string) goja.Value {
+	if res.Has(key) {
+		switch key {
+		case "headersSent":
+			return res.vm.ToValue(res.responseSent)
+		}
+	}
+
+	if res.nativeRespFuncs[key] == nil {
+		res.initFunction(key)
+	}
+	if res.nativeRespFuncs[key] != nil {
+		return res.nativeRespFuncs[key]
+	}
+
+	return goja.Undefined()
 }
 
 func (res *contextResponse) Set(_ string, _ goja.Value) bool {
@@ -56,7 +76,12 @@ func (res *contextResponse) Set(_ string, _ goja.Value) bool {
 }
 
 func (res *contextResponse) Has(key string) bool {
-	return !goja.IsUndefined(res.Get(key))
+	for _, k := range responseProperties {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (res *contextResponse) Delete(_ string) bool {
@@ -64,7 +89,7 @@ func (res *contextResponse) Delete(_ string) bool {
 }
 
 func (res *contextResponse) Keys() []string {
-	return []string{"headersSent"}
+	return responseProperties
 }
 
 func (res *contextResponse) reset() {
@@ -73,7 +98,7 @@ func (res *contextResponse) reset() {
 }
 
 // implement Response.get(field) of Express.js
-func (res *contextResponse) nativeGet(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) get(fc goja.FunctionCall) goja.Value {
 	field := fc.Argument(0)
 	if goja.IsUndefined(field) {
 		panic(res.vm.NewTypeError("unexpected undefined to .get()"))
@@ -81,8 +106,10 @@ func (res *contextResponse) nativeGet(fc goja.FunctionCall) goja.Value {
 
 	w := res.httpResp
 
-	k := fmt.Sprintf("%s", field.Export())
-	v := w.Header().Get(k)
+	var v string
+	if s, ok := field.Export().(string); ok {
+		v = w.Header().Get(s)
+	}
 
 	if v != "" {
 		return res.vm.ToValue(v)
@@ -92,7 +119,7 @@ func (res *contextResponse) nativeGet(fc goja.FunctionCall) goja.Value {
 }
 
 // implement Response.set(field [, value]) of Express.js (chainable)
-func (res *contextResponse) nativeSet(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) set(fc goja.FunctionCall) goja.Value {
 	field := fc.Argument(0)
 	val := fc.Argument(1)
 
@@ -125,7 +152,7 @@ func (res *contextResponse) nativeSet(fc goja.FunctionCall) goja.Value {
 			panic(res.vm.NewGoError(err))
 		}
 		for k, v := range m {
-			res.nativeSet(goja.FunctionCall{
+			res.set(goja.FunctionCall{
 				This: fc.This,
 				Arguments: []goja.Value{
 					res.vm.ToValue(k),
@@ -138,7 +165,7 @@ func (res *contextResponse) nativeSet(fc goja.FunctionCall) goja.Value {
 }
 
 // implement Response.status(code) of Express.js (chainable)
-func (res *contextResponse) nativeStatus(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) status(fc goja.FunctionCall) goja.Value {
 	if res.responseSent {
 		panic(res.vm.NewTypeError("response already sent"))
 	}
@@ -163,7 +190,7 @@ func (res *contextResponse) nativeStatus(fc goja.FunctionCall) goja.Value {
 }
 
 // implement Response.json([body]) of Express.js
-func (res *contextResponse) nativeJson(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) json(fc goja.FunctionCall) goja.Value {
 	if res.responseSent {
 		panic(res.vm.NewTypeError("response already sent"))
 	}
@@ -195,7 +222,7 @@ func (res *contextResponse) nativeJson(fc goja.FunctionCall) goja.Value {
 }
 
 // implement Response.end([body]) of Express.js
-func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) send(fc goja.FunctionCall) goja.Value {
 	if res.responseSent {
 		panic(res.vm.NewTypeError("response already sent"))
 	}
@@ -213,7 +240,7 @@ func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
 	header := w.Header()
 
 	if goja.IsNull(body) {
-		return res.nativeJson(fc)
+		return res.json(fc)
 	} else {
 		switch body.ExportType().Kind() {
 		case reflect.String:
@@ -222,7 +249,7 @@ func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
 			}
 			res.vm.ExportTo(body, &content)
 		case reflect.Map, reflect.Slice, reflect.Bool:
-			return res.nativeJson(fc)
+			return res.json(fc)
 		default:
 			fmt.Printf("%+v\n", body.ExportType())
 			fmt.Printf("%+v\n", body.ExportType().Kind() == reflect.Map)
@@ -237,7 +264,7 @@ func (res *contextResponse) nativeSend(fc goja.FunctionCall) goja.Value {
 }
 
 // implement Response.end([data] [, encoding]) of Express.js
-func (res *contextResponse) nativeEnd(fc goja.FunctionCall) goja.Value {
+func (res *contextResponse) end(fc goja.FunctionCall) goja.Value {
 	if res.responseSent {
 		panic(res.vm.NewTypeError("response already sent"))
 	}

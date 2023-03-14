@@ -11,9 +11,11 @@ import (
 )
 
 type HeadersProxy struct {
-	nativeObj *goja.Object
-	header    http.Header
-	vm        *goja.Runtime
+	nativeObj        *goja.Object
+	header           http.Header
+	vm               *goja.Runtime
+	nativeProperties map[string]goja.Value
+	keys             []string
 }
 
 var _ goja.DynamicObject = (*HeadersProxy)(nil)
@@ -25,8 +27,10 @@ func newHeadersProxy(vm *goja.Runtime, symbols *polyfill.RuntimeSymbols) *Header
 	}
 
 	proxy := &HeadersProxy{
-		vm:        vm,
-		nativeObj: headersInstance,
+		vm:               vm,
+		nativeObj:        headersInstance,
+		nativeProperties: map[string]goja.Value{},
+		keys:             make([]string, 0, 1),
 	}
 	headersInstance.Set("map", vm.NewDynamicObject(proxy))
 
@@ -35,9 +39,17 @@ func newHeadersProxy(vm *goja.Runtime, symbols *polyfill.RuntimeSymbols) *Header
 
 func (h *HeadersProxy) UseHeader(header http.Header) {
 	h.header = header
+	for k := range h.header {
+		h.keys = append(h.keys, k)
+	}
+	sort.Strings(h.keys)
 }
 
 func (h *HeadersProxy) unsetHeader() {
+	for k := range h.nativeProperties {
+		delete(h.nativeProperties, k)
+	}
+	h.keys = h.keys[:0]
 	h.header = nil
 }
 
@@ -46,11 +58,14 @@ func (h *HeadersProxy) NativeObject() goja.Value {
 }
 
 func (h *HeadersProxy) Get(key string) goja.Value {
-	v := h.header.Get(key)
-	if v != "" {
-		return h.vm.ToValue(v)
+	if h.nativeProperties[key] == nil {
+		v := h.header.Get(key)
+		if v == "" {
+			return goja.Undefined()
+		}
+		h.nativeProperties[key] = h.vm.ToValue(v)
 	}
-	return goja.Undefined()
+	return h.nativeProperties[key]
 }
 
 func (h *HeadersProxy) Set(key string, val goja.Value) bool {
@@ -58,7 +73,12 @@ func (h *HeadersProxy) Set(key string, val goja.Value) bool {
 }
 
 func (h *HeadersProxy) Has(key string) bool {
-	return !goja.IsUndefined(h.Get(key))
+	for _, k := range h.keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *HeadersProxy) Delete(key string) bool {
@@ -66,10 +86,5 @@ func (h *HeadersProxy) Delete(key string) bool {
 }
 
 func (h *HeadersProxy) Keys() []string {
-	keys := make([]string, 0)
-	for k := range h.header {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return h.keys
 }

@@ -10,10 +10,12 @@ js:
 	(cd js && npm run build)
 
 example: extensions
-	go run ./cmd/example 127.0.0.1:8081
+	CGO_ENABLED=0 go build -o ./build/example -ldflags="-s -w" ./cmd/example
+	./build/example 127.0.0.1:8081
 
 example-race: extensions
-	go run -race ./cmd/example 127.0.0.1:8081
+	go build -race -o ./build/example ./cmd/example
+	./build/example 127.0.0.1:8081
 
 reload:
 	curl -X PUT -F file=@cmd/example/$(or $(file),next.js) http://127.0.0.1:8081/reload

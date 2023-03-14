@@ -5,29 +5,33 @@ import (
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
+	"go.miragespace.co/heresy/polyfill"
 
 	"github.com/dop251/goja"
 )
 
 type ResponseProxy struct {
-	stream       *StreamController
-	ioContext    *common.IOContext
-	resp         *http.Response
-	vm           *goja.Runtime
-	headersProxy *shared.HeadersProxy
-	nativeObj    *goja.Object
-	nativeBody   goja.Value
+	stream                 *StreamController
+	ioContext              *common.IOContext
+	resp                   *http.Response
+	vm                     *goja.Runtime
+	headersProxy           *shared.HeadersProxy
+	nativeResponseInstance *goja.Object
+	nativeObj              *goja.Object
+	nativeBody             goja.Value
 }
 
 var _ goja.DynamicObject = (*ResponseProxy)(nil)
 
-func newResponseProxy(vm *goja.Runtime, controller *StreamController) *ResponseProxy {
+func newResponseProxy(vm *goja.Runtime, controller *StreamController, symbols *polyfill.RuntimeSymbols) *ResponseProxy {
 	r := &ResponseProxy{
-		vm:         vm,
-		stream:     controller,
-		nativeBody: goja.Null(),
+		vm:                     vm,
+		stream:                 controller,
+		nativeBody:             goja.Null(),
+		nativeResponseInstance: symbols.Response(),
 	}
 	r.nativeObj = vm.NewDynamicObject(r)
+	r.nativeObj.SetPrototype(symbols.ResponsePrototype())
 	return r
 }
 
@@ -68,7 +72,7 @@ func (r *ResponseProxy) Get(key string) goja.Value {
 		return r.nativeBody
 
 	default:
-		return goja.Undefined()
+		return r.nativeResponseInstance.Get(key)
 	}
 }
 

@@ -13,15 +13,23 @@ noun, /ˈher.ə.si/
     or an action that shows that you have no respect for the official opinion.
 ```
 
-Heresy is a runtime to allow you to run JavaScript as middleware for `http.Server` in either Express.js style or Web Worker `FetchEvent` style, with support for hot-reloading the JavaScript.
+Heresy is a pure Go runtime that lets you:
+1. Embed the runtime and run JavaScript as middleware for `http.Server` in either Express.js style, or Web Worker `FetchEvent` style;
+    - The handler script can be reloaded on-the-fly!
+2. Run the runtime as a reverse proxy to some backend services, with the power of JavaScript as scripting language to intercept requests;
+3. Or spin up the runtime as a standalone server to run JavaScript application, with the power of Go.
+
+## What is it *not*?
+
+1. It is *not* a secure/isolated runtime to run untrusted user code;
+2. It is *not* a sandbox similar to `v8::Isolate`.
 
 ## Examples
 
 ### Express.js style
 
 ```javascript
-function httpHandler(ctx) {
-	const { req, res, next } = ctx
+function httpHandler({ req, res, next }) {
     if (req.path === "/") {
         next()
     } else {
@@ -29,20 +37,16 @@ function httpHandler(ctx) {
     }
 }
 
-registerMiddlewareHandler(httpHandler)
+registerExpressHandler(httpHandler)
 ```
 
 ### `FetchEvent` style
 
 ```javascript
-async function eventHandler(evt) {
-    const { request, respondWith } = evt
-    if (request.method === "POST") {
-        const json = await request.json()
-        respondWith(new Response(JSON.stringify(json), {
-            headers: {
-                'content-type': 'application/json'
-            }
+async function eventHandler(event) {
+    if (event.request.method === "POST") {
+        event.respondWith(new Response(event.request.body, {
+            headers: event.request.headers
         }))
     }
     // to the next handler in http.Server
@@ -54,18 +58,37 @@ registerEventHandler(eventHandler)
 ### With network access
 
 ```javascript
-async function httpHandler(ctx) {
-    const { fetch, res } = ctx
-	const resp = await fetch("https://example.com/")
+async function httpHandler({ res, fetch }) {
+    const resp = await fetch("https://example.com/")
     res.send(await resp.text())
 }
 
-registerMiddlewareHandler(httpHandler, {
+registerExpressHandler(httpHandler, {
     fetch: true
 })
+
+// ... similarly in FetchEvent
+// async function eventHandler(event) {
+//     const { fetch } = event
+//     const resp = await fetch("https://example.com/")
+//     event.respondWith(resp)
+// }
+
+// registerEventHandler(eventHandler, {
+//     fetch: true
+// })
 ```
 
-## Features Matrix
+## Supported ECMAScript Features
+
+The JavaScript runtime is provided by [goja](https://github.com/dop251/goja). Currently it supports most features up to ES2018, with the notable exceptions of:
+1. async iterator (`async function* foo()` and `for await...of`);
+2. `SharedArrayBuffer`;
+3. ES2015 modules (`import foo from 'bar'`, please use a bundler that outputs UMD or CJS).
+
+The recommended transpile target is ES2017. However, if you run into problems, ES6 can be used as a fallback.
+
+## Runtime Features Matrix
 
 | **Supported Features via Polyfill**                                        |
 |----------------------------------------------------------------------------|

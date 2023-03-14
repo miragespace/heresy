@@ -1,9 +1,14 @@
-const __runtimeResolverResult = <T>(
+const __runtimeResolverResult = async <T>(
   arg: T | Promise<T>, // argument as native object
   resolve: (result: T) => void, // callback to Go when the Promise resolves
   reject: (e: unknown) => void // callback to Go when the Promise rejects
 ) => {
-  Promise.resolve(arg).then(resolve).catch(reject);
+  try {
+    const r = await arg;
+    resolve(r);
+  } catch (e) {
+    reject(e);
+  }
 };
 
 const __runtimeResolverFuncWithArg = <T>(

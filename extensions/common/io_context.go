@@ -101,19 +101,19 @@ func (t *IOContext) TrackReader(w *shared.NativeReaderWrapper) {
 	t.nativeReaderWrappers = append(t.nativeReaderWrappers, w)
 }
 
-func (t *IOContext) release() {
-	go func() {
-		if t.shouldExtend.Load() {
-			// t.logger.Debug("waiting for extenders")
-			t.extenderGroup.Wait()
-			t.extendedCtxCancel()
-		} else {
-			<-t.reqCtx.Done()
-			// t.logger.Debug("http request cancelled")
-			t.extendedCtxCancel()
-		}
-	}()
+func (t *IOContext) wait() {
+	if t.shouldExtend.Load() {
+		// t.logger.Debug("waiting for extenders")
+		t.extenderGroup.Wait()
+		t.extendedCtxCancel()
+	} else {
+		<-t.reqCtx.Done()
+		// t.logger.Debug("http request cancelled")
+		t.extendedCtxCancel()
+	}
+}
 
+func (t *IOContext) release() {
 	<-t.extendedCtx.Done()
 	t.fetchGroup.Wait()
 

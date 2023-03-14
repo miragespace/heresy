@@ -19,6 +19,7 @@ type RequestContext struct {
 	nativeFetch   goja.Value
 	nativeResolve goja.Value
 	nativeReject  goja.Value
+	nativeNext    goja.Value
 	requestDone   chan struct{}
 	deps          RequestContextDeps
 	vm            *goja.Runtime
@@ -32,16 +33,17 @@ type RequestContext struct {
 
 var _ goja.DynamicObject = (*RequestContext)(nil)
 
+var contextProperties = []string{"req", "res"}
+
 func newRequestContext(vm *goja.Runtime, deps RequestContextDeps) *RequestContext {
 	ctx := &RequestContext{
 		requestDone: make(chan struct{}, 1),
 		deps:        deps,
 		vm:          vm,
 	}
+
 	ctx.nativeResolve = ctx.getNativeContextResolver()
 	ctx.nativeReject = ctx.getNativeContextRejector()
-	ctx.responseProxy = newContextResponse(ctx)
-	ctx.requestProxy = newContextRequest(ctx)
 	ctx.nativeCtx = vm.NewDynamicObject(ctx)
 
 	return ctx
@@ -55,21 +57,35 @@ func (ctx *RequestContext) reset() {
 	ctx.hasFetch = false
 	ctx.nextInvoked = false
 	ctx.responseSent = false
-	ctx.responseProxy.reset()
+	ctx.statusSet = false
+	if ctx.responseProxy != nil {
+		ctx.responseProxy.reset()
+	}
+	if ctx.requestProxy != nil {
+		ctx.requestProxy.reset()
+	}
 	ctx.ioContext = nil
 }
 
 func (ctx *RequestContext) Get(key string) goja.Value {
 	switch key {
 	case "res":
+		if ctx.responseProxy == nil {
+			ctx.responseProxy = newContextResponse(ctx)
+		}
 		return ctx.responseProxy.nativeRes
 	case "req":
+		if ctx.requestProxy == nil {
+			ctx.requestProxy = newContextRequest(ctx)
+		}
 		return ctx.requestProxy.nativeReq
 	case "next":
-		return ctx.vm.ToValue(ctx.nativeNext)
+		if ctx.nativeNext == nil {
+			ctx.nativeNext = ctx.vm.ToValue(ctx.next)
+		}
+		return ctx.nativeNext
 	case "fetch":
 		if ctx.hasFetch {
-			// lazy initialization
 			if ctx.nativeFetch == nil {
 				fetcher := ctx.deps.Fetch.NewNativeFetchVM(ctx.ioContext, ctx.vm)
 				ctx.nativeFetch = fetcher.NativeFunc()
@@ -87,7 +103,12 @@ func (ctx *RequestContext) Set(_ string, _ goja.Value) bool {
 }
 
 func (ctx *RequestContext) Has(key string) bool {
-	return !goja.IsUndefined(ctx.Get(key))
+	for _, k := range contextProperties {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctx *RequestContext) Delete(key string) bool {
@@ -95,11 +116,7 @@ func (ctx *RequestContext) Delete(key string) bool {
 }
 
 func (ctx *RequestContext) Keys() []string {
-	if ctx.hasFetch {
-		return []string{"fetch", "next", "req", "res"}
-	} else {
-		return []string{"next", "req", "res"}
-	}
+	return contextProperties
 }
 
 func (ctx *RequestContext) WithHttp(w http.ResponseWriter, r *http.Request, next http.Handler) *RequestContext {
@@ -114,7 +131,7 @@ func (ctx *RequestContext) EnableFetch() {
 	ctx.hasFetch = true
 }
 
-func (ctx *RequestContext) nativeNext(fc goja.FunctionCall) goja.Value {
+func (ctx *RequestContext) next(fc goja.FunctionCall) goja.Value {
 	if ctx.nextInvoked {
 		return goja.Undefined()
 	}

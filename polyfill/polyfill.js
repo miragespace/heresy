@@ -13,3 +13,4 @@ require('react-native-fetch/polyfill.es6.min.js')
 
 const __runtimeFetchEventInstance = new FetchEvent()
 const __runtimeRequestInstance = new Request()
+const __runtimeResponseInstance = new Response()
