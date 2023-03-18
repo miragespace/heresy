@@ -12,25 +12,23 @@ import (
 )
 
 type IOContext struct {
-	extenderGroup        sync.WaitGroup
-	extendedCtx          context.Context
-	extendedCtxCancel    context.CancelFunc
-	fetchGroup           sync.WaitGroup
-	shouldExtend         atomic.Bool
-	reqCtx               context.Context
-	logger               *zap.Logger
-	hdrPool              *shared.HeadersProxyPool
-	limiter              *semaphore.Weighted
-	nativeReaderWrappers []*shared.NativeReaderWrapper
-	cleanupFuncs         []func()
+	extenderGroup     sync.WaitGroup
+	extendedCtx       context.Context
+	extendedCtxCancel context.CancelFunc
+	fetchGroup        sync.WaitGroup
+	shouldExtend      atomic.Bool
+	reqCtx            context.Context
+	logger            *zap.Logger
+	hdrPool           *shared.HeadersProxyPool
+	limiter           *semaphore.Weighted
+	cleanupFuncs      []func()
 }
 
 func newIOContext(logger *zap.Logger, concurrent int64) *IOContext {
 	return &IOContext{
-		logger:               logger.With(zap.String("component", "ioContext")),
-		limiter:              semaphore.NewWeighted(concurrent),
-		nativeReaderWrappers: make([]*shared.NativeReaderWrapper, 0),
-		cleanupFuncs:         make([]func(), 0),
+		logger:       logger.With(zap.String("component", "ioContext")),
+		limiter:      semaphore.NewWeighted(concurrent),
+		cleanupFuncs: make([]func(), 0),
 	}
 }
 
@@ -94,13 +92,6 @@ func (t *IOContext) RegisterCleanup(c func()) {
 	// t.logger.Debug("cleanup registed", zap.String("via", caller.TrimmedPath()))
 }
 
-func (t *IOContext) TrackReader(w *shared.NativeReaderWrapper) {
-	if w == nil {
-		return
-	}
-	t.nativeReaderWrappers = append(t.nativeReaderWrappers, w)
-}
-
 func (t *IOContext) wait() {
 	if t.shouldExtend.Load() {
 		// t.logger.Debug("waiting for extenders")
@@ -116,16 +107,6 @@ func (t *IOContext) wait() {
 func (t *IOContext) release() {
 	<-t.extendedCtx.Done()
 	t.fetchGroup.Wait()
-
-	// t.logger.Debug("releasing readers", zap.Int("readers", len(t.nativeReaderWrappers)))
-
-	buf := GetBuffer()
-	defer PutBuffer(buf)
-
-	for i := range t.nativeReaderWrappers {
-		t.nativeReaderWrappers[i].Reset(buf)
-	}
-	t.nativeReaderWrappers = t.nativeReaderWrappers[:0]
 
 	// t.logger.Debug("invoking cleanup", zap.Int("funcs", len(t.cleanupFuncs)))
 

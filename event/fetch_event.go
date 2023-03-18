@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/common/shared"
 	"go.miragespace.co/heresy/extensions/fetch"
 	"go.miragespace.co/heresy/extensions/stream"
 
@@ -294,8 +295,8 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 				}
 			}
 
-			buf := common.GetBuffer()
-			defer common.PutBuffer(buf)
+			buf := shared.GetBuffer()
+			defer shared.PutBuffer(buf)
 
 			evt.responseSent = true
 			w.WriteHeader(int(status))

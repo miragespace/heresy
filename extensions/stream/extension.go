@@ -29,7 +29,7 @@ type StreamController struct {
 }
 
 type ReadableStream struct {
-	nativeWrapper *shared.NativeReaderWrapper
+	nativeWrapper *NativeReaderWrapper
 	nativeStream  goja.Value
 }
 
@@ -61,7 +61,7 @@ func NewController(eventLoop *eventloop.EventLoop, symbols *polyfill.RuntimeSymb
 		s.streamPool = x.NewPool[*ReadableStream](x.DefaultPoolCapacity).
 			WithFactory(func() *ReadableStream {
 				wrapperNew.Add(1)
-				wrapper := shared.NewNativeReaderWrapper(vm, s.eventLoop)
+				wrapper := NewNativeReaderWrapper(vm, s.eventLoop)
 				return &ReadableStream{
 					nativeWrapper: wrapper,
 				}
@@ -106,7 +106,6 @@ func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy 
 func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadCloser, vm *goja.Runtime) *ReadableStream {
 	stream := s.streamPool.Get()
 	stream.nativeWrapper.WithReader(r)
-	t.TrackReader(stream.nativeWrapper)
 
 	// unfortunately, ReadableStream itself cannot be reused. we have to create one every time.
 	fn, err := s.runtimeWrapper(goja.Undefined(), stream.nativeWrapper.NativeObject())
@@ -116,6 +115,10 @@ func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadClo
 	stream.nativeStream = fn
 
 	t.RegisterCleanup(func() {
+		buf := shared.GetBuffer()
+		defer shared.PutBuffer(buf)
+
+		stream.nativeWrapper.Reset(buf)
 		stream.nativeStream = nil
 		s.streamPool.Put(stream)
 		wrapperPut.Add(1)
@@ -130,7 +133,7 @@ func AssertReader(native goja.Value, vm *goja.Runtime) (io.Reader, bool) {
 	if wrapper == nil {
 		return nil, false
 	}
-	w, ok := wrapper.Export().(*shared.NativeReaderWrapper)
+	w, ok := wrapper.Export().(*NativeReaderWrapper)
 	if ok {
 		return w.Reader(), true
 	}

@@ -1,14 +1,14 @@
-package shared
+package stream
 
 import (
 	"errors"
 	"io"
 
+	"go.miragespace.co/heresy/extensions/common/shared"
+
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
 )
-
-const BufferSize = 8 * 1024
 
 type NativeReaderWrapper struct {
 	reader    io.ReadCloser
@@ -31,7 +31,7 @@ func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop) *N
 	}
 	s.nativeObj = vm.NewDynamicObject(s)
 	s._readInto = vm.ToValue(s.readInto)
-	s._size = vm.ToValue(BufferSize)
+	s._size = vm.ToValue(shared.BufferSize)
 	return s
 }
 
