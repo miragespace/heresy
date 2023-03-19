@@ -11,6 +11,8 @@ import (
 	"os/signal"
 
 	"go.miragespace.co/heresy"
+	"go.miragespace.co/heresy/extensions/kv"
+	_ "go.miragespace.co/heresy/extensions/kv/memory"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -25,7 +27,12 @@ func main() {
 		panic(err)
 	}
 
-	rt, err := heresy.NewRuntime(logger, 4)
+	kvManager := kv.NewKVManager()
+	if err := kvManager.Configure("potato", "memory"); err != nil {
+		panic(err)
+	}
+
+	rt, err := heresy.NewRuntime(logger, kvManager, 4)
 	if err != nil {
 		panic(err)
 	}

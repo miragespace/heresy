@@ -98,14 +98,3 @@ func (p *PromiseResolver) NewPromiseFuncWithArgVM(
 	)
 	return err
 }
-
-// func (p *PromiseResolver) NewPromiseFuncWithSpread(
-// 	fn, arg, resolve, reject goja.Value,
-// ) error {
-// 	errCh := make(chan error, 1)
-// 	p.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-// 		errCh <- p.NewPromiseFuncWithSpreadVM(vm, fn, arg, resolve, reject)
-// 	})
-
-// 	return <-errCh
-// }

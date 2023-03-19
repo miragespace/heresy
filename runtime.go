@@ -9,6 +9,7 @@ import (
 
 	"go.miragespace.co/heresy/extensions/console"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/kv"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
 	"go.miragespace.co/heresy/polyfill"
@@ -23,6 +24,7 @@ import (
 type Runtime struct {
 	logger    *zap.Logger
 	transport http.RoundTripper
+	kvManager *kv.KVManager
 	shards    []atomic.Pointer[runtimeInstance]
 	_         cpu.CacheLinePad
 	nextShard uint32
@@ -32,7 +34,7 @@ type Runtime struct {
 
 // NewRuntime returns a new heresy runtime. Use shards > 1 to enable round-robin
 // incoming requests to multiple JavaScript runtimes. Recommend not exceeding 4.
-func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
+func NewRuntime(logger *zap.Logger, kvManager *kv.KVManager, shards int) (*Runtime, error) {
 	if logger == nil {
 		return nil, fmt.Errorf("logger cannot be nil")
 	}
@@ -49,6 +51,7 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 
 	rt := &Runtime{
 		logger:    logger,
+		kvManager: kvManager,
 		transport: t,
 		shards:    make([]atomic.Pointer[runtimeInstance], shards),
 		numShards: shards,
@@ -58,6 +61,8 @@ func NewRuntime(logger *zap.Logger, shards int) (*Runtime, error) {
 		rt.shards[i] = atomic.Pointer[runtimeInstance]{}
 		rt.shards[i].Store(nilInstance)
 	}
+
+	atomic.AddUint32(&rt.nextShard, ^uint32(0))
 
 	logger.Info("Heresy runtime configured",
 		zap.Int("io.outbound", 10),
@@ -117,11 +122,12 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 	return nil
 }
 
-func (rt *Runtime) shardRun(fn func(instance *runtimeInstance)) {
+func (rt *Runtime) shardRun(fn func(index int, instance *runtimeInstance)) {
 	n := atomic.AddUint32(&rt.nextShard, 1)
-	instance := rt.shards[int(n)%rt.numShards].Load()
+	i := int(n) % rt.numShards
+	instance := rt.shards[i].Load()
 
-	fn(instance)
+	fn(i, instance)
 }
 
 func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) (instance *runtimeInstance, err error) {
@@ -139,6 +145,7 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 
 	instance = &runtimeInstance{
 		logger:    rt.logger,
+		kv:        rt.kvManager,
 		eventLoop: eventLoop,
 	}
 

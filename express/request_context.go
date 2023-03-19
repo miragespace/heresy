@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"go.miragespace.co/heresy/extensions/common"
+	"go.miragespace.co/heresy/extensions/kv"
 
 	"github.com/dop251/goja"
 )
@@ -16,6 +17,7 @@ type RequestContext struct {
 	ioContext     *common.IOContext
 	responseProxy *contextResponse
 	requestProxy  *contextRequest
+	kvMapper      *kv.KVMapper
 	nativeFetch   goja.Value
 	nativeResolve goja.Value
 	nativeReject  goja.Value
@@ -33,7 +35,7 @@ type RequestContext struct {
 
 var _ goja.DynamicObject = (*RequestContext)(nil)
 
-var contextProperties = []string{"req", "res"}
+var contextProperties = []string{"kv", "req", "res"}
 
 func newRequestContext(vm *goja.Runtime, deps RequestContextDeps) *RequestContext {
 	ctx := &RequestContext{
@@ -64,6 +66,9 @@ func (ctx *RequestContext) reset() {
 	if ctx.requestProxy != nil {
 		ctx.requestProxy.reset()
 	}
+	if ctx.kvMapper != nil {
+		ctx.kvMapper.Reset()
+	}
 	ctx.ioContext = nil
 }
 
@@ -84,6 +89,12 @@ func (ctx *RequestContext) Get(key string) goja.Value {
 			ctx.nativeNext = ctx.vm.ToValue(ctx.next)
 		}
 		return ctx.nativeNext
+	case "kv":
+		if ctx.kvMapper == nil {
+			ctx.kvMapper = ctx.deps.KV.GetKVMapper(ctx.vm, ctx.deps.Eventloop)
+		}
+		ctx.kvMapper.WithIOContext(ctx.ioContext)
+		return ctx.kvMapper.NativeObject()
 	case "fetch":
 		if ctx.hasFetch {
 			if ctx.nativeFetch == nil {
@@ -92,7 +103,7 @@ func (ctx *RequestContext) Get(key string) goja.Value {
 			}
 			return ctx.nativeFetch
 		}
-		fallthrough
+		return goja.Undefined()
 	default:
 		return goja.Undefined()
 	}

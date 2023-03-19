@@ -6,6 +6,7 @@ import (
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/x"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/kv"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/eventloop"
@@ -21,6 +22,7 @@ type RequestContextDeps struct {
 	Logger    *zap.Logger
 	Eventloop *eventloop.EventLoop
 	Fetch     *fetch.Fetch
+	KV        *kv.KVManager
 }
 
 type RequestContextPool struct {

@@ -9,6 +9,7 @@ import (
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/kv"
 	"go.miragespace.co/heresy/extensions/stream"
 
 	"github.com/dop251/goja"
@@ -22,6 +23,7 @@ type FetchEvent struct {
 	httpNext              http.Handler
 	ioContext             *common.IOContext
 	requestProxy          *fetchEventRequest
+	kvMapper              *kv.KVMapper
 	nativeFetch           goja.Value
 	nativeRequestResolve  goja.Value
 	nativeRequestReject   goja.Value
@@ -44,7 +46,7 @@ type FetchEvent struct {
 
 var _ goja.DynamicObject = (*FetchEvent)(nil)
 
-var eventProperties = []string{"request"}
+var eventProperties = []string{"kv", "request"}
 
 func newFetchEvent(vm *goja.Runtime, deps FetchEventDeps) *FetchEvent {
 	evt := &FetchEvent{
@@ -75,6 +77,9 @@ func (evt *FetchEvent) reset() {
 	if evt.requestProxy != nil {
 		evt.requestProxy.reset()
 	}
+	if evt.kvMapper != nil {
+		evt.kvMapper.Reset()
+	}
 	evt.ioContext = nil
 }
 
@@ -98,8 +103,14 @@ func (evt *FetchEvent) Get(key string) goja.Value {
 			}
 			return evt.nativeFetch
 		}
-		fallthrough
+		return goja.Undefined()
 
+	case "kv":
+		if evt.kvMapper == nil {
+			evt.kvMapper = evt.deps.KV.GetKVMapper(evt.vm, evt.deps.Eventloop)
+		}
+		evt.kvMapper.WithIOContext(evt.ioContext)
+		return evt.kvMapper.NativeObject()
 	case "request":
 		if evt.requestProxy == nil {
 			evt.requestProxy = newFetchEventRequest(evt)

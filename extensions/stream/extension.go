@@ -93,16 +93,6 @@ func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy 
 	return resp
 }
 
-// func (s *StreamController) NewReadableStream(t *common.IOContext, r io.ReadCloser) *ReadableStream {
-// 	valCh := make(chan *ReadableStream, 1)
-// 	s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
-// 		s := s.NewReadableStreamVM(t, r, vm)
-// 		valCh <- s
-// 	})
-
-// 	return <-valCh
-// }
-
 func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadCloser, vm *goja.Runtime) *ReadableStream {
 	stream := s.streamPool.Get()
 	stream.nativeWrapper.WithReader(r)

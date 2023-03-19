@@ -6,6 +6,7 @@ import (
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/x"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/kv"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
 	"go.miragespace.co/heresy/polyfill"
@@ -27,6 +28,7 @@ type FetchEventDeps struct {
 	Stream    *stream.StreamController
 	Resolver  *promise.PromiseResolver
 	Fetch     *fetch.Fetch
+	KV        *kv.KVManager
 }
 
 type FetchEventPool struct {

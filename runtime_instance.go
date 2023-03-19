@@ -11,6 +11,7 @@ import (
 	"go.miragespace.co/heresy/extensions/common/shared"
 	"go.miragespace.co/heresy/extensions/console"
 	"go.miragespace.co/heresy/extensions/fetch"
+	"go.miragespace.co/heresy/extensions/kv"
 	"go.miragespace.co/heresy/extensions/promise"
 	"go.miragespace.co/heresy/extensions/stream"
 	"go.miragespace.co/heresy/polyfill"
@@ -44,6 +45,7 @@ type runtimeInstance struct {
 	resolver          *promise.PromiseResolver
 	stream            *stream.StreamController
 	fetcher           *fetch.Fetch
+	kv                *kv.KVManager
 	vm                *goja.Runtime
 }
 
@@ -108,6 +110,7 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 			Logger:    logger,
 			Eventloop: inst.eventLoop,
 			Fetch:     inst.fetcher,
+			KV:        inst.kv,
 		})
 		inst.eventPool = event.NewFetchEventPool(event.FetchEventDeps{
 			Logger:    logger,
@@ -116,6 +119,7 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 			Stream:    inst.stream,
 			Resolver:  inst.resolver,
 			Fetch:     inst.fetcher,
+			KV:        inst.kv,
 		})
 
 		inst.vm = vm // reference is kept for .Interrupt

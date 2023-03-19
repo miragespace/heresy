@@ -3,6 +3,7 @@ package heresy
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/dop251/goja"
 )
@@ -14,7 +15,9 @@ var (
 
 func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rt.shardRun(func(instance *runtimeInstance) {
+		rt.shardRun(func(i int, instance *runtimeInstance) {
+			w.Header().Set("X-Heresy-Shard", strconv.Itoa(i))
+
 			if instance == nilInstance {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				fmt.Fprint(w, ErrRuntimeNotReady)
