@@ -27,6 +27,58 @@ Heresy is a pure Go runtime that lets you:
 
 ## Examples
 
+### Running locally
+
+Use Go 1.26 or newer and Node.js 24 with npm. The Go runtime embeds its JavaScript
+assets, so Node.js is only needed when rebuilding those assets.
+
+```sh
+make deps                   # initialize the pinned JS submodule; install lockfiles
+make typecheck extensions js
+make test                   # Go tests with the race detector
+make example                # listen on 127.0.0.1:8081
+```
+
+In another terminal, load a handler and send a request:
+
+```sh
+make reload                 # load event/hello.js
+curl http://127.0.0.1:8081/
+make reload file=express/next.js
+```
+
+The example's `/reload` and `/debug` endpoints are development tools. Keep them
+private: `/reload` accepts trusted JavaScript via PUT, with a 1 MiB upload limit.
+The example returns 503 until a script has been loaded.
+
+### Embedding
+
+```go
+rt, err := heresy.NewRuntime(logger, nil, 4) // nil creates an empty KV manager
+if err != nil {
+    return err
+}
+defer rt.Stop(true)
+
+if err := rt.LoadScript("handler.js", script, false); err != nil {
+    return err
+}
+handler := rt.Middleware(nextHTTPHandler)
+```
+
+Each shard has independent JavaScript globals. Configure shared storage through
+`kv.NewKVManager()` before creating the runtime; the included `memory` backend
+shares values across shards in this process.
+
+`LoadScript` prepares every shard before publishing a new generation. Compilation
+or initialization errors leave the current generation serving requests.
+With `interrupt=false`, old requests and their `waitUntil` work drain in the
+background. With `interrupt=true`, old JavaScript and native I/O are canceled and
+its timers are removed; pending requests that have not sent a response receive
+503. `Stop(false)` starts the same graceful drain, and `Stop(true)` interrupts all
+generations and waits for native cleanup. Blocking Go handlers and KV backends
+must honor cancellation for an interrupt to finish promptly.
+
 ### Express.js style
 
 ```javascript
@@ -82,12 +134,11 @@ registerExpressHandler(httpHandler, {
 
 ## Supported ECMAScript Features
 
-The JavaScript runtime is provided by [goja](https://github.com/dop251/goja). Currently it supports most features up to ES2018, with the notable exceptions of:
-1. async iterator (`async function* foo()` and `for await...of`);
-2. `SharedArrayBuffer`;
-3. ES2015 modules (`import foo from 'bar'`, please use a bundler that outputs UMD or CJS).
-
-The recommended transpile target is ES2017. However, if you run into problems, ES6 can be used as a fallback.
+The JavaScript runtime is provided by [goja](https://github.com/dop251/goja).
+Syntax support follows the version pinned in `go.mod`. The bundled polyfills
+target ES2017; bundle application scripts to UMD or CommonJS before loading them.
+The Web API implementations below provide a subset of browser/Workers behavior,
+and Express-style handlers implement a subset of Express.
 
 ## Runtime Features Matrix
 
@@ -101,8 +152,12 @@ The recommended transpile target is ES2017. However, if you run into problems, E
 | **Component** | Status       | req/request                                                     | resp/respondWith                                                 | next  |
 |---------------|--------------|-----------------------------------------------------------------|------------------------------------------------------------------|-------|
 | Express.js    | WIP          | Partial implementations <br> (see `request_context_request.go`) | Partial implementations <br> (see `request_context_response.go`) | Works |
-| FetchEvent    | Implemented* | Works                                                           | Works                                                            | Works |
-| Fetch API     | Implemented  |                                                                 |                                                                  |       |
+| FetchEvent    | Implemented* | Native request bodies and headers                               | Response or Promise<Response>; binary and native stream bodies    | Works |
+| Fetch API     | Partial      | Strings, binary buffers, and native stream bodies                | Response status, headers, and native stream bodies                |       |
+
+Custom JavaScript-created streams cannot currently be sent as fetch or response
+bodies. Native streams obtained from a request or an outbound fetch can be passed
+through without converting them to text.
 
 *: Even though ECMAScript is single-threaded in nature, heresy runtime manages data access and IOs asynchronously. Therefore, once your event handler returns, it should not call any methods from `FetchEvent`.
 
@@ -145,7 +200,20 @@ function eventHandler(evt) {
 }
 ```
 
-## TODO: Complete this README
+## Development
+
+Go behavior tests are split by runtime lifecycle, handlers, fetch, request/response
+semantics, and KV. CI checks Go 1.26 and 1.27, typechecks and rebuilds JavaScript,
+checks generated assets against Git, and runs dependency audits.
+
+The `js` directory is a separate Git submodule. Changes to its sources or build
+dependencies must be committed there, followed by the updated submodule pointer
+and regenerated `polyfill/node_modules` assets in this repository. Push the
+submodule commit before a parent commit that references it.
+
+TypeScript is pinned to 6.x because the Rollup TypeScript plugin uses the classic
+compiler API. Dependency installation uses `npm ci --ignore-scripts`; builds run
+through the explicit `build` scripts.
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmiragespace%2Fheresy?ref=badge_large)

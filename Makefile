@@ -1,10 +1,10 @@
 deps:
-	git submodule update --remote
-	(cd extensions && npm install)
-	(cd js && npm install)
+	git submodule update --init --recursive
+	(cd extensions && npm ci --ignore-scripts)
+	(cd js && npm ci --ignore-scripts)
 
 extensions:
-	(cd extensions && npx tsc)
+	(cd extensions && npm run build)
 
 js:
 	(cd js && npm run build)
@@ -18,6 +18,13 @@ example-race: extensions
 	./build/example 127.0.0.1:8081
 
 reload:
-	curl -X PUT -F file=@cmd/example/$(or $(file),next.js) http://127.0.0.1:8081/reload
+	curl --fail-with-body -X PUT -F file=@cmd/example/$(or $(file),event/hello.js) http://127.0.0.1:8081/reload
 
-.PHONY: js extensions
+typecheck:
+	(cd extensions && npm run typecheck)
+	(cd js && npm run typecheck)
+
+test:
+	go test -race ./...
+
+.PHONY: deps js extensions example example-race reload typecheck test
