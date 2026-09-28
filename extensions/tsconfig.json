@@ -19,8 +19,7 @@
         "strict": true,
         "skipDefaultLibCheck": true,
         "skipLibCheck": true,
-        "moduleResolution": "node",
-        "baseUrl": ".",
+        "moduleResolution": "bundler",
     },
     "include": [
         "./fetch/*.ts",

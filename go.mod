@@ -1,31 +1,25 @@
 module go.miragespace.co/heresy
 
-go 1.20
+go 1.26.0
 
 require (
-	github.com/dop251/goja v0.0.0-20230304130813-e2f543bf4b4c
-	github.com/dop251/goja_nodejs v0.0.0-20230226152057-060fa99b809f
-	github.com/go-chi/chi/v5 v5.0.8
+	github.com/dop251/goja v0.0.0-20260926152631-39ec2650adc9
+	github.com/dop251/goja_nodejs v0.0.0-20260918173711-b481721df8a2
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/libp2p/go-buffer-pool v0.1.0
-	github.com/puzpuzpuz/xsync/v2 v2.4.0
-	github.com/stretchr/testify v1.8.2
-	go.uber.org/zap v1.24.0
-	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
-	golang.org/x/sys v0.6.0
+	github.com/puzpuzpuz/xsync/v2 v2.5.1
+	go.uber.org/zap v1.28.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
 )
 
-replace github.com/dop251/goja => github.com/miragespace/goja v0.0.0-20230314063533-2c5cc6661cea
-
 require (
-	github.com/benbjohnson/clock v1.3.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dlclark/regexp2 v1.8.1 // indirect
-	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
-	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	go.uber.org/atomic v1.10.0 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/net v0.8.0 // indirect
-	golang.org/x/text v0.8.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.8.0 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
+	github.com/google/pprof v0.0.0-20260926063103-aaccee046517 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
