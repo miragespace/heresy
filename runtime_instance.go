@@ -3,6 +3,7 @@ package heresy
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"go.miragespace.co/heresy/event"
@@ -34,6 +35,12 @@ const (
 )
 
 type runtimeInstance struct {
+	context           context.Context
+	cancel            context.CancelFunc
+	stopped           chan struct{}
+	active            sync.WaitGroup
+	drainOnce         sync.Once
+	terminateOnce     sync.Once
 	logger            *zap.Logger
 	middlewareHandler atomic.Value                         // goja.Value
 	middlewareType    atomic.Value                         // handlerType
@@ -51,9 +58,24 @@ type runtimeInstance struct {
 
 func (inst *runtimeInstance) stop(interrupt bool) {
 	if interrupt {
-		inst.vm.Interrupt(context.Canceled)
+		inst.terminate()
+		return
 	}
-	inst.eventLoop.StopNoWait()
+	inst.drainOnce.Do(func() {
+		go func() {
+			inst.active.Wait()
+			inst.terminate()
+		}()
+	})
+}
+
+func (inst *runtimeInstance) terminate() {
+	inst.terminateOnce.Do(func() {
+		inst.cancel()
+		inst.vm.Interrupt(context.Canceled)
+		inst.eventLoop.Terminate()
+		close(inst.stopped)
+	})
 }
 
 func (inst *runtimeInstance) optionHelper(vm *goja.Runtime, opt goja.Value) {
@@ -133,14 +155,16 @@ func (inst *runtimeInstance) prepareInstance(logger *zap.Logger, symbols *polyfi
 func (inst *runtimeInstance) loadProgram(prog *goja.Program) (setup chan error) {
 	setup = make(chan error, 1)
 
-	inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+	if !inst.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		_, err := vm.RunProgram(prog)
 		if err != nil {
 			setup <- fmt.Errorf("error setting up handler script: %w", err)
 			return
 		}
 		setup <- nil
-	})
+	}) {
+		setup <- ErrRuntimeNotReady
+	}
 
 	return
 }

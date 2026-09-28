@@ -39,12 +39,16 @@ func (r *ResponseProxy) NativeObject() goja.Value {
 	return r.nativeObj
 }
 
-func (r *ResponseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp *http.Response) {
-	readable := r.stream.NewReadableStreamVM(t, resp.Body, vm)
+func (r *ResponseProxy) WithResponse(t *common.IOContext, vm *goja.Runtime, resp *http.Response) error {
+	readable, err := r.stream.newReadableStreamVM(t, resp.Body)
+	if err != nil {
+		return err
+	}
 	r.nativeBody = readable.NativeStream()
 	r.resp = resp
 	r.ioContext = t
 	t.RegisterCleanup(r.reset)
+	return nil
 }
 
 func (r *ResponseProxy) reset() {
@@ -57,7 +61,7 @@ func (r *ResponseProxy) reset() {
 func (r *ResponseProxy) Get(key string) goja.Value {
 	switch key {
 	case "statusText":
-		return r.vm.ToValue(r.resp.Status)
+		return r.vm.ToValue(http.StatusText(r.resp.StatusCode))
 	case "statusCode":
 		return r.vm.ToValue(r.resp.StatusCode)
 
@@ -89,5 +93,5 @@ func (r *ResponseProxy) Delete(key string) bool {
 }
 
 func (r *ResponseProxy) Keys() []string {
-	return []string{"body", "header", "statusCode", "statusText"}
+	return []string{"body", "headers", "statusCode", "statusText"}
 }

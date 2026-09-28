@@ -95,7 +95,7 @@ func NewFetch(cfg FetchConfig) (*Fetch, error) {
 				obj.Set("doFetch", vm.ToValue(wrapper.doFetch))
 				fn, err := f.runtimeFetchWrapper(goja.Undefined(), obj)
 				if err != nil {
-					panic(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err))
+					panic(vm.NewGoError(fmt.Errorf("runtime panic: Failed to get native fetch: %w", err)))
 				}
 				return &NativeFetcher{
 					nativeWrapper: wrapper,

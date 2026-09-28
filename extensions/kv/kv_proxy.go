@@ -37,9 +37,12 @@ var _ goja.DynamicObject = (*NativeKVProxy)(nil)
 func (kv *NativeKVProxy) get(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
 	promise, resolve, reject := vm.NewPromise()
 	key := fc.Argument(0).String()
+	t := kv.ioContext
+	ctx := t.Context()
+	t.StartIO()
 	go func() {
-		val, err := kv.backing.Get(kv.ioContext.Context(), key)
-		kv.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		val, err := kv.backing.Get(ctx, key)
+		t.CompleteIO(kv.eventLoop, func(vm *goja.Runtime) {
 			if err != nil {
 				if errors.Is(err, ErrKeyNotFound) {
 					resolve(goja.Null())
@@ -49,7 +52,7 @@ func (kv *NativeKVProxy) get(fc goja.FunctionCall, vm *goja.Runtime) goja.Value 
 				return
 			}
 			resolve(string(val))
-		})
+		}, nil)
 	}()
 	return vm.ToValue(promise)
 }
@@ -58,15 +61,18 @@ func (kv *NativeKVProxy) put(fc goja.FunctionCall, vm *goja.Runtime) goja.Value 
 	promise, resolve, reject := vm.NewPromise()
 	key := fc.Argument(0).String()
 	val := fc.Argument(1).String()
+	t := kv.ioContext
+	ctx := t.Context()
+	t.StartIO()
 	go func() {
-		err := kv.backing.Put(kv.ioContext.Context(), key, []byte(val))
-		kv.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		err := kv.backing.Put(ctx, key, []byte(val))
+		t.CompleteIO(kv.eventLoop, func(vm *goja.Runtime) {
 			if err != nil {
 				reject(vm.NewGoError(err))
 			} else {
 				resolve(goja.Undefined())
 			}
-		})
+		}, nil)
 	}()
 	return vm.ToValue(promise)
 }
@@ -74,15 +80,18 @@ func (kv *NativeKVProxy) put(fc goja.FunctionCall, vm *goja.Runtime) goja.Value 
 func (kv *NativeKVProxy) del(fc goja.FunctionCall, vm *goja.Runtime) goja.Value {
 	promise, resolve, reject := vm.NewPromise()
 	key := fc.Argument(0).String()
+	t := kv.ioContext
+	ctx := t.Context()
+	t.StartIO()
 	go func() {
-		deleted, err := kv.backing.Del(kv.ioContext.Context(), key)
-		kv.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+		deleted, err := kv.backing.Del(ctx, key)
+		t.CompleteIO(kv.eventLoop, func(vm *goja.Runtime) {
 			if err != nil {
 				reject(vm.NewGoError(err))
 			} else {
 				resolve(deleted)
 			}
-		})
+		}, nil)
 	}()
 	return vm.ToValue(promise)
 }

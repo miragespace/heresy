@@ -1,9 +1,11 @@
 package stream
 
 import (
+	"context"
 	"errors"
 	"io"
 
+	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
 
 	"github.com/dop251/goja"
@@ -11,6 +13,7 @@ import (
 )
 
 type NativeReaderWrapper struct {
+	ioContext *common.IOContext
 	reader    io.ReadCloser
 	eventLoop *eventloop.EventLoop
 	nativeObj *goja.Object
@@ -36,9 +39,9 @@ func NewNativeReaderWrapper(vm *goja.Runtime, eventLoop *eventloop.EventLoop) *N
 }
 
 func (s *NativeReaderWrapper) Reset(buf []byte) {
-	io.CopyBuffer(io.Discard, s.reader, buf)
 	s.reader.Close()
 	s.reader = nil
+	s.ioContext = nil
 }
 
 func (s *NativeReaderWrapper) Reader() io.ReadCloser {
@@ -103,18 +106,29 @@ func (s *NativeReaderWrapper) readInto(fc goja.FunctionCall, vm *goja.Runtime) (
 		length     int64            = byteLength.ToInteger()
 	)
 
-	buf := buffer.Bytes()[offset:length]
+	if offset < 0 || length < 0 || offset > int64(len(buffer.Bytes())) || length > int64(len(buffer.Bytes()))-offset {
+		panic(vm.NewTypeError("invalid read buffer range"))
+	}
+	// The polyfill does not detach BYOB buffers. Copy back on the VM thread so
+	// user JavaScript cannot race a native read into the same ArrayBuffer.
+	buf := make([]byte, length)
+	t := s.ioContext
+	reader := s.reader
+	t.StartIO()
 	go func() {
-		n, err := s.reader.Read(buf)
+		stop := context.AfterFunc(t.Context(), func() { reader.Close() })
+		n, err := reader.Read(buf)
+		stop()
 		if err != nil && !errors.Is(err, io.EOF) {
-			s.reader.Close()
-			s.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+			reader.Close()
+			t.CompleteIO(s.eventLoop, func(vm *goja.Runtime) {
 				reject(vm.NewGoError(err))
-			})
+			}, nil)
 		} else {
-			s.eventLoop.RunOnLoop(func(*goja.Runtime) {
+			t.CompleteIO(s.eventLoop, func(*goja.Runtime) {
+				copy(buffer.Bytes()[offset:offset+int64(n)], buf[:n])
 				resolve(n)
-			})
+			}, nil)
 		}
 	}()
 

@@ -11,10 +11,15 @@ reject // callback to Go when the Promise rejects
         reject(e);
     }
 };
-const __runtimeResolverFuncWithArg = (fn, // JavaScript native function, usually the handler in the script
+const __runtimeResolverFuncWithArg = async (fn, // JavaScript native function, usually the handler in the script
 arg, // argument to the said handler as native object
 resolve, // callback to Go when the Promise resolves
 reject // callback to Go when the Promise rejects
 ) => {
-    __runtimeResolverResult(fn(arg), resolve, reject);
+    try {
+        resolve(await fn(arg));
+    }
+    catch (e) {
+        reject(e);
+    }
 };

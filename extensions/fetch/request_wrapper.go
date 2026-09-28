@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,6 +39,8 @@ func (f *NativeFetchWrapper) doFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 	if goja.IsUndefined(reqBody) || goja.IsNull(reqBody) {
 		// no body
 		useBody = http.NoBody
+	} else if buffer, ok := reqBody.Export().(goja.ArrayBuffer); ok {
+		useBody = bytes.NewReader(bytes.Clone(buffer.Bytes()))
 	} else if bodyType.Kind() == reflect.String {
 		strBuf := pool.NewBufferString(reqBody.String())
 		f.ioContext.RegisterCleanup(strBuf.Reset)
@@ -46,52 +49,50 @@ func (f *NativeFetchWrapper) doFetch(fc goja.FunctionCall, vm *goja.Runtime) (re
 		// possibly wrapped ReadableStream
 		reader, ok := stream.AssertReader(reqBody, vm)
 		if !ok {
-			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(vm.NewGoError(ErrUnsupportedReadableStream))
-			})
+			reject(vm.NewGoError(ErrUnsupportedReadableStream))
 			return
 		}
 		useBody = reader
 	}
 
+	t := f.ioContext
+	ctx := t.Context()
+	t.StartIO()
 	go func() {
-		err := f.ioContext.AcquireFetchToken()
-		if err != nil {
-			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(vm.NewGoError(err))
-			})
-			return
-		}
-		defer f.ioContext.ReleaseFetchToken()
-
-		req, err := http.NewRequestWithContext(f.ioContext.Context(), method, url, useBody)
-		if err != nil {
-			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				reject(vm.NewGoError(err))
-			})
-			return
-		}
-
-		for k, v := range headers {
-			if s, ok := v.(string); ok {
-				req.Header.Set(k, s)
-			} else {
-				req.Header.Set(k, fmt.Sprintf("%s", v))
+		var resp *http.Response
+		err := func() error {
+			if err := t.AcquireFetchToken(); err != nil {
+				return err
 			}
-		}
-		req.Header.Set("user-agent", UserAgent)
-
-		resp, err := f.cfg.Client.Do(req)
-		if err != nil {
-			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+			defer t.ReleaseFetchToken()
+			req, err := http.NewRequestWithContext(ctx, method, url, useBody)
+			if err != nil {
+				return err
+			}
+			for k, v := range headers {
+				req.Header.Set(k, fmt.Sprint(v))
+			}
+			if req.Header.Get("User-Agent") == "" {
+				req.Header.Set("User-Agent", UserAgent)
+			}
+			resp, err = f.cfg.Client.Do(req)
+			return err
+		}()
+		t.CompleteIO(f.cfg.Eventloop, func(vm *goja.Runtime) {
+			if err != nil {
 				reject(vm.NewGoError(err))
-			})
-		} else {
-			f.cfg.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
-				result.WithResponse(f.ioContext, vm, resp)
-				resolve(result.NativeObject())
-			})
-		}
+			} else {
+				if err := result.WithResponse(t, vm, resp); err != nil {
+					reject(vm.NewGoError(err))
+				} else {
+					resolve(result.NativeObject())
+				}
+			}
+		}, func() {
+			if resp != nil {
+				resp.Body.Close()
+			}
+		})
 	}()
 
 	return

@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"go.miragespace.co/heresy/extensions/common"
-	"go.miragespace.co/heresy/extensions/common/shared"
 	"go.miragespace.co/heresy/extensions/common/x"
 	"go.miragespace.co/heresy/polyfill"
 
@@ -94,27 +93,31 @@ func (s *StreamController) GetResponseProxy(t *common.IOContext) *ResponseProxy 
 }
 
 func (s *StreamController) NewReadableStreamVM(t *common.IOContext, r io.ReadCloser, vm *goja.Runtime) *ReadableStream {
-	stream := s.streamPool.Get()
-	stream.nativeWrapper.WithReader(r)
-
-	// unfortunately, ReadableStream itself cannot be reused. we have to create one every time.
-	fn, err := s.runtimeWrapper(goja.Undefined(), stream.nativeWrapper.NativeObject())
+	stream, err := s.newReadableStreamVM(t, r)
 	if err != nil {
-		panic(fmt.Errorf("runtime panic: Failed to get native ReadableStream: %w", err))
+		panic(vm.NewGoError(err))
 	}
-	stream.nativeStream = fn
+	return stream
+}
 
+func (s *StreamController) newReadableStreamVM(t *common.IOContext, r io.ReadCloser) (*ReadableStream, error) {
+	stream := s.streamPool.Get()
+	stream.nativeWrapper.ioContext = t
+	stream.nativeWrapper.WithReader(r)
 	t.RegisterCleanup(func() {
-		buf := shared.GetBuffer()
-		defer shared.PutBuffer(buf)
-
-		stream.nativeWrapper.Reset(buf)
+		stream.nativeWrapper.Reset(nil)
 		stream.nativeStream = nil
 		s.streamPool.Put(stream)
 		wrapperPut.Add(1)
 	})
 
-	return stream
+	// unfortunately, ReadableStream itself cannot be reused. we have to create one every time.
+	fn, err := s.runtimeWrapper(goja.Undefined(), stream.nativeWrapper.NativeObject())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create native ReadableStream: %w", err)
+	}
+	stream.nativeStream = fn
+	return stream, nil
 }
 
 func AssertReader(native goja.Value, vm *goja.Runtime) (io.Reader, bool) {

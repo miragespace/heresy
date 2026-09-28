@@ -7,20 +7,24 @@ const __runtimeFetch = (goWrapper) => {
         if (requestBody._bodyReadableStream) {
             useBody = requestBody._bodyReadableStream;
         }
-        else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+        else if (requestBody._bodyArrayBuffer) {
+            useBody = await request.arrayBuffer();
+        }
+        else if (requestBody._bodyText !== undefined) {
             useBody = await requestBody.text();
         }
-        const { statusText, statusCode, header, body } = await goWrapper.doFetch(request.url, request.method, request.headers.map, // .map property is the backing storage of headers
+        const { statusText, statusCode, headers, body } = await goWrapper.doFetch(request.url, request.method, request.headers.map, // .map property is the backing storage of headers
         useBody);
         return new Response(body, {
             status: statusCode,
             statusText: statusText,
-            headers: header,
+            headers,
         });
     };
 };
 // this is a helper for FetchEvent.respondWith
-const __runtimeResponseHelper = async (response) => {
+const __runtimeResponseHelper = async (input) => {
+    const response = await input;
     if (!(response instanceof Response)) {
         return { ok: false };
     }
@@ -30,7 +34,10 @@ const __runtimeResponseHelper = async (response) => {
     if (requestBody._bodyReadableStream) {
         useBody = requestBody._bodyReadableStream;
     }
-    else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+    else if (requestBody._bodyArrayBuffer) {
+        useBody = await response.arrayBuffer();
+    }
+    else if (requestBody._bodyText !== undefined) {
         useBody = await requestBody.text();
     }
     // .map property is the backing storage of headers

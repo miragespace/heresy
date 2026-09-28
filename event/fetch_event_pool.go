@@ -43,10 +43,12 @@ func NewFetchEventPool(deps FetchEventDeps) *FetchEventPool {
 			ctxCh := make(chan *FetchEvent, 1)
 			// initialization of new native variable has to be
 			// ran on the loop
-			deps.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+			if !deps.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				eventNew.Add(1)
 				ctxCh <- newFetchEvent(vm, deps)
-			})
+			}) {
+				return nil
+			}
 			return <-ctxCh
 		})
 
@@ -55,6 +57,9 @@ func NewFetchEventPool(deps FetchEventDeps) *FetchEventPool {
 
 func (p *FetchEventPool) Get(t *common.IOContext) *FetchEvent {
 	f := p.evtPool.Get()
+	if f == nil {
+		return nil
+	}
 	f.ioContext = t
 	t.RegisterCleanup(func() {
 		p.put(f)

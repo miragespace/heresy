@@ -1,10 +1,13 @@
 package event
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"reflect"
+	"sync"
+	"sync/atomic"
 
 	"go.miragespace.co/heresy/extensions/common"
 	"go.miragespace.co/heresy/extensions/common/shared"
@@ -41,7 +44,8 @@ type FetchEvent struct {
 	hasFetch              bool
 	skipNext              bool
 	useRespondWith        bool
-	responseSent          bool
+	responseSent          atomic.Bool
+	work                  sync.WaitGroup
 }
 
 var _ goja.DynamicObject = (*FetchEvent)(nil)
@@ -73,7 +77,13 @@ func (evt *FetchEvent) reset() {
 	evt.hasFetch = false
 	evt.skipNext = false
 	evt.useRespondWith = false
-	evt.responseSent = false
+	evt.responseSent.Store(false)
+	for len(evt.requestDone) > 0 {
+		<-evt.requestDone
+	}
+	for len(evt.responseDone) > 0 {
+		<-evt.responseDone
+	}
 	if evt.requestProxy != nil {
 		evt.requestProxy.reset()
 	}
@@ -199,7 +209,9 @@ func (evt *FetchEvent) waitUntil(fc goja.FunctionCall, vm *goja.Runtime) (ret go
 		panic(vm.NewTypeError("waitUntil: expecting argument as a Promise"))
 	}
 
-	evt.ioContext.ExtendContext()
+	if !evt.ioContext.ExtendContext() {
+		panic(vm.NewTypeError("waitUntil: request lifetime has ended"))
+	}
 
 	if evt.nativeConclude == nil {
 		evt.nativeConclude = vm.ToValue(func(goja.FunctionCall) goja.Value {
@@ -221,11 +233,25 @@ func (evt *FetchEvent) waitUntil(fc goja.FunctionCall, vm *goja.Runtime) (ret go
 }
 
 func (evt *FetchEvent) Wait() {
-	<-evt.requestDone
+	select {
+	case <-evt.requestDone:
+	case <-evt.ioContext.RuntimeDone():
+	}
+	evt.work.Wait()
+	select {
+	case <-evt.ioContext.RuntimeDone():
+		if !evt.responseSent.Swap(true) && evt.ioContext.RequestContext().Err() == nil {
+			http.Error(evt.httpResp, "runtime stopped", http.StatusServiceUnavailable)
+		}
+	default:
+	}
 }
 
 func (evt *FetchEvent) wake() {
-	evt.requestDone <- struct{}{}
+	select {
+	case evt.requestDone <- struct{}{}:
+	default:
+	}
 }
 
 func (evt *FetchEvent) NativeObject() goja.Value {
@@ -241,7 +267,8 @@ func (evt *FetchEvent) Reject() goja.Value {
 }
 
 func (evt *FetchEvent) Exception(err error) {
-	if evt.responseSent {
+	if evt.responseSent.Swap(true) {
+		evt.wake()
 		return
 	}
 	select {
@@ -250,7 +277,6 @@ func (evt *FetchEvent) Exception(err error) {
 		evt.httpResp.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(evt.httpResp, "Unexpected runtime exception: %+v", err)
 	}
-	evt.responseSent = true
 	evt.wake()
 }
 
@@ -265,7 +291,7 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 
 		if respOk := nativeResp.Get("ok"); !respOk.ToBoolean() {
 			// .respondWith did not resolve to a Response (e.g. undefined)
-			evt.responseSent = true
+			evt.responseSent.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 			evt.responseDone <- struct{}{}
 			return
@@ -280,10 +306,15 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			headers     map[string]any = respHeaders.Export().(map[string]any)
 			useBody     io.Reader      = nil
 		)
+		if status < 200 || status > 599 {
+			panic(evt.vm.NewTypeError("respondWith: invalid response status"))
+		}
 
 		if goja.IsUndefined(respBody) || goja.IsNull(respBody) {
 			// no body
 			useBody = http.NoBody
+		} else if buffer, ok := respBody.Export().(goja.ArrayBuffer); ok {
+			useBody = bytes.NewReader(bytes.Clone(buffer.Bytes()))
 		} else if bodyType.Kind() == reflect.String {
 			strBuf := pool.NewBufferString(respBody.String())
 			evt.ioContext.RegisterCleanup(strBuf.Reset)
@@ -297,7 +328,10 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			useBody = reader
 		}
 
+		evt.responseSent.Store(true)
+		evt.work.Add(1)
 		go func() {
+			defer evt.work.Done()
 			for k, v := range headers {
 				if s, ok := v.(string); ok {
 					w.Header().Set(k, s)
@@ -309,7 +343,6 @@ func (evt *FetchEvent) getNativeResponseResolver() goja.Value {
 			buf := shared.GetBuffer()
 			defer shared.PutBuffer(buf)
 
-			evt.responseSent = true
 			w.WriteHeader(int(status))
 			_, err := io.CopyBuffer(w, useBody, buf)
 			if err != nil {
@@ -326,26 +359,31 @@ func (evt *FetchEvent) getNativeResponseRejector() goja.Value {
 
 		v := fc.Argument(0)
 		w.WriteHeader(http.StatusInternalServerError)
-		if goja.IsUndefined(v) {
-			return
+		if !goja.IsUndefined(v) {
+			fmt.Fprintf(w, "Execution exception: %+v", v)
 		}
-		fmt.Fprintf(w, "Execution exception: %+v", v)
-		evt.responseSent = true
+		evt.responseSent.Store(true)
 		evt.responseDone <- struct{}{}
 	})
 }
 
 func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.FunctionCall) {
+		skipNext := evt.skipNext
+		evt.work.Add(1)
 		go func() {
+			defer evt.work.Done()
 			defer evt.wake()
 
-			if evt.skipNext {
+			if skipNext {
 				// .respondWith was used
-				<-evt.responseDone
+				select {
+				case <-evt.responseDone:
+				case <-evt.ioContext.RuntimeDone():
+				}
 			} else {
 				// fallthrough, .respondWith did not call
-				evt.responseSent = true
+				evt.responseSent.Store(true)
 				evt.httpNext.ServeHTTP(w, r)
 			}
 		}()
@@ -354,24 +392,30 @@ func (evt *FetchEvent) getNativeRequestResolver() goja.Value {
 
 func (evt *FetchEvent) getNativeRequestRejector() goja.Value {
 	return evt.nativeFunctionWrapper(func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall) {
-		v := fc.Argument(0)
+		message := fc.Argument(0).String()
+		skipNext := evt.skipNext
 
+		evt.work.Add(1)
 		go func() {
+			defer evt.work.Done()
 			defer evt.wake()
 
-			if evt.skipNext {
+			if skipNext {
 				// .respondWith was used, but exception thrown
-				<-evt.responseDone
+				select {
+				case <-evt.responseDone:
+				case <-evt.ioContext.RuntimeDone():
+					return
+				}
 			}
 
-			if evt.responseSent {
-				evt.deps.Logger.Warn("Handler thrown exception after response was sent", zap.String("exception", v.String()))
+			if evt.responseSent.Swap(true) {
+				evt.deps.Logger.Warn("Handler thrown exception after response was sent", zap.String("exception", message))
 				return
 			}
 
-			evt.responseSent = true
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, "Execution exception: %+v", v)
+			fmt.Fprintf(w, "Execution exception: %s", message)
 		}()
 	})
 }
@@ -380,6 +424,9 @@ func (evt *FetchEvent) nativeFunctionWrapper(
 	fn func(w http.ResponseWriter, r *http.Request, fc goja.FunctionCall),
 ) goja.Value {
 	return evt.vm.ToValue(func(fc goja.FunctionCall) (ret goja.Value) {
+		if evt.ioContext.RuntimeCanceled() {
+			return goja.Undefined()
+		}
 		fn(evt.httpResp, evt.httpReq, fc)
 		return goja.Undefined()
 	})

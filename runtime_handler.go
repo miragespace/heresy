@@ -26,6 +26,7 @@ func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 
 			middlewareType := instance.middlewareType.Load().(handlerType)
 			if middlewareType == handlerTypeUnset {
+				defer instance.active.Done()
 				w.WriteHeader(http.StatusBadGateway)
 				fmt.Fprint(w, ErrNoMiddlewareHandler)
 				return
@@ -44,12 +45,17 @@ func (rt *Runtime) Middleware(next http.Handler) http.Handler {
 func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
 
-	ioCtx := inst.ioContextPool.Get(r.Context())
+	ioCtx := inst.ioContextPool.GetWithLifetime(r.Context(), inst.context, inst.stopped)
+	ioCtx.RegisterCleanup(inst.active.Done)
 	defer inst.ioContextPool.Put(ioCtx)
 
 	ctx := inst.contextPool.Get(ioCtx)
+	if ctx == nil {
+		http.Error(w, ErrRuntimeNotReady.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
-	ctx.WithHttp(w, r, next)
+	ctx.WithHttp(w, r.WithContext(ioCtx.Context()), next)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
@@ -62,7 +68,11 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 		ctx.Resolve(),
 		ctx.Reject(),
 	); err != nil {
-		ctx.Exception(err)
+		if inst.context.Err() != nil {
+			<-inst.stopped
+		} else {
+			ctx.Exception(err)
+		}
 	}
 
 	ctx.Wait()
@@ -71,12 +81,17 @@ func (inst *runtimeInstance) handleAsExpress(w http.ResponseWriter, r *http.Requ
 func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	middlewareHandler := inst.middlewareHandler.Load().(goja.Value)
 
-	ioCtx := inst.ioContextPool.Get(r.Context())
+	ioCtx := inst.ioContextPool.GetWithLifetime(r.Context(), inst.context, inst.stopped)
+	ioCtx.RegisterCleanup(inst.active.Done)
 	defer inst.ioContextPool.Put(ioCtx)
 
 	evt := inst.eventPool.Get(ioCtx)
+	if evt == nil {
+		http.Error(w, ErrRuntimeNotReady.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
-	evt.WithHttp(w, r, next)
+	evt.WithHttp(w, r.WithContext(ioCtx.Context()), next)
 
 	handlerOption := inst.handlerOption.Load()
 	if handlerOption.EnableFetch {
@@ -89,7 +104,11 @@ func (inst *runtimeInstance) handleAsEvent(w http.ResponseWriter, r *http.Reques
 		evt.Resolve(),
 		evt.Reject(),
 	); err != nil {
-		evt.Exception(err)
+		if inst.context.Err() != nil {
+			<-inst.stopped
+		} else {
+			evt.Exception(err)
+		}
 	}
 
 	evt.Wait()

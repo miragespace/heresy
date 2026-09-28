@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"go.miragespace.co/heresy/polyfill"
 
@@ -23,7 +24,7 @@ var _ goja.DynamicObject = (*HeadersProxy)(nil)
 func newHeadersProxy(vm *goja.Runtime, symbols *polyfill.RuntimeSymbols) *HeadersProxy {
 	headersInstance, err := symbols.Headers()(nil)
 	if err != nil {
-		panic(fmt.Errorf("runtime panic: (new Headers) constructor call returned an error: %w", err))
+		panic(vm.NewGoError(fmt.Errorf("runtime panic: (new Headers) constructor call returned an error: %w", err)))
 	}
 
 	proxy := &HeadersProxy{
@@ -40,7 +41,7 @@ func newHeadersProxy(vm *goja.Runtime, symbols *polyfill.RuntimeSymbols) *Header
 func (h *HeadersProxy) UseHeader(header http.Header) {
 	h.header = header
 	for k := range h.header {
-		h.keys = append(h.keys, k)
+		h.keys = append(h.keys, strings.ToLower(k))
 	}
 	sort.Strings(h.keys)
 }
@@ -60,7 +61,7 @@ func (h *HeadersProxy) NativeObject() goja.Value {
 func (h *HeadersProxy) Get(key string) goja.Value {
 	if h.nativeProperties[key] == nil {
 		v := h.header.Get(key)
-		if v == "" {
+		if !h.Has(key) {
 			return goja.Undefined()
 		}
 		h.nativeProperties[key] = h.vm.ToValue(v)
@@ -74,7 +75,7 @@ func (h *HeadersProxy) Set(key string, val goja.Value) bool {
 
 func (h *HeadersProxy) Has(key string) bool {
 	for _, k := range h.keys {
-		if k == key {
+		if strings.EqualFold(k, key) {
 			return true
 		}
 	}

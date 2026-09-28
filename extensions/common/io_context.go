@@ -5,19 +5,27 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/dop251/goja"
+	"github.com/dop251/goja_nodejs/eventloop"
 	"go.miragespace.co/heresy/extensions/common/shared"
-
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 )
 
 type IOContext struct {
-	extenderGroup     sync.WaitGroup
+	extenderMu        sync.Mutex
+	extenders         int
+	waiting           bool
+	extensionDone     chan struct{}
 	extendedCtx       context.Context
 	extendedCtxCancel context.CancelFunc
-	fetchGroup        sync.WaitGroup
 	shouldExtend      atomic.Bool
 	reqCtx            context.Context
+	runtimeContext    context.Context
+	runtimeDone       <-chan struct{}
+	stopRequest       func() bool
+	stopRuntime       func() bool
+	ioGroup           sync.WaitGroup
 	logger            *zap.Logger
 	hdrPool           *shared.HeadersProxyPool
 	limiter           *semaphore.Weighted
@@ -26,90 +34,87 @@ type IOContext struct {
 
 func newIOContext(logger *zap.Logger, concurrent int64) *IOContext {
 	return &IOContext{
-		logger:       logger.With(zap.String("component", "ioContext")),
-		limiter:      semaphore.NewWeighted(concurrent),
-		cleanupFuncs: make([]func(), 0),
+		logger:  logger.With(zap.String("component", "ioContext")),
+		limiter: semaphore.NewWeighted(concurrent),
 	}
 }
 
-func (t *IOContext) ExtendContext() {
-	// t.logger.Debug("extending context")
+func (t *IOContext) ExtendContext() bool {
+	t.extenderMu.Lock()
+	defer t.extenderMu.Unlock()
+	if t.extendedCtx.Err() != nil || (t.waiting && t.extenders == 0) {
+		return false
+	}
+	t.extenders++
 	t.shouldExtend.Store(true)
-	t.extenderGroup.Add(1)
-	// From godoc: "Note that calls with a positive delta that occur
-	// when the counter is zero must happen before a Wait.
-	// Calls with a negative delta, or calls with a positive delta that start
-	// when the counter is greater than zero, may happen at any time."
-	//
-	// Meaning that when sync.WaitGroup's counter is > 0, reentrant .Add(1)
-	// from .ExtendContext() via .waitUntil() will not violate this invariant.
-	// That means calling .waitUntil after the handler returns is a data race.
+	return true
 }
 
 func (t *IOContext) ConcludeExtend() {
-	// t.logger.Debug("concluding extension")
-	t.extenderGroup.Done()
-}
-
-func (t *IOContext) Context() context.Context {
-	if t.shouldExtend.Load() {
-		// t.logger.Debug("returning extended context")
-		return t.extendedCtx
-	} else {
-		// t.logger.Debug("returning http request context")
-		return t.reqCtx
+	t.extenderMu.Lock()
+	defer t.extenderMu.Unlock()
+	t.extenders--
+	if t.waiting && t.extenders == 0 {
+		close(t.extensionDone)
 	}
 }
+
+// Context covers native I/O, including work started before waitUntil extends it.
+func (t *IOContext) Context() context.Context        { return t.extendedCtx }
+func (t *IOContext) RequestContext() context.Context { return t.reqCtx }
+func (t *IOContext) RuntimeDone() <-chan struct{}    { return t.runtimeDone }
+func (t *IOContext) RuntimeCanceled() bool           { return t.runtimeContext.Err() != nil }
 
 func (t *IOContext) GetHeadersProxy() *shared.HeadersProxy {
 	h := t.hdrPool.Get()
-	t.RegisterCleanup(func() {
-		t.hdrPool.Put(h)
-	})
+	t.RegisterCleanup(func() { t.hdrPool.Put(h) })
 	return h
 }
 
-func (t *IOContext) AcquireFetchToken() (err error) {
-	err = t.limiter.Acquire(t.Context(), 1)
-	if err != nil {
+// Register native work on the VM thread, before launching its goroutine. Keep it
+// registered until its result has been delivered on the loop (or rejected by a
+// terminated loop), so cleanup cannot race queued callbacks or waiting I/O.
+func (t *IOContext) StartIO() { t.ioGroup.Add(1) }
+func (t *IOContext) EndIO()   { t.ioGroup.Done() }
+func (t *IOContext) CompleteIO(loop *eventloop.EventLoop, fn func(*goja.Runtime), discard func()) {
+	if loop.RunOnLoop(func(vm *goja.Runtime) {
+		defer t.EndIO()
+		fn(vm)
+	}) {
 		return
 	}
-	t.fetchGroup.Add(1)
-	return
+	if discard != nil {
+		discard()
+	}
+	t.EndIO()
 }
-
-func (t *IOContext) ReleaseFetchToken() {
-	t.fetchGroup.Done()
-	t.limiter.Release(1)
-}
+func (t *IOContext) AcquireFetchToken() error { return t.limiter.Acquire(t.Context(), 1) }
+func (t *IOContext) ReleaseFetchToken()       { t.limiter.Release(1) }
 
 func (t *IOContext) RegisterCleanup(c func()) {
-	if c == nil {
-		return
+	if c != nil {
+		t.cleanupFuncs = append(t.cleanupFuncs, c)
 	}
-	t.cleanupFuncs = append(t.cleanupFuncs, c)
-	// caller := zapcore.NewEntryCaller(runtime.Caller(1))
-	// t.logger.Debug("cleanup registed", zap.String("via", caller.TrimmedPath()))
 }
 
 func (t *IOContext) wait() {
-	if t.shouldExtend.Load() {
-		// t.logger.Debug("waiting for extenders")
-		t.extenderGroup.Wait()
-		t.extendedCtxCancel()
-	} else {
-		<-t.reqCtx.Done()
-		// t.logger.Debug("http request cancelled")
-		t.extendedCtxCancel()
+	t.extenderMu.Lock()
+	t.waiting = true
+	if t.extenders == 0 {
+		close(t.extensionDone)
 	}
+	t.extenderMu.Unlock()
+	select {
+	case <-t.extensionDone:
+	case <-t.runtimeDone:
+	}
+	t.extendedCtxCancel()
 }
 
 func (t *IOContext) release() {
-	<-t.extendedCtx.Done()
-	t.fetchGroup.Wait()
-
-	// t.logger.Debug("invoking cleanup", zap.Int("funcs", len(t.cleanupFuncs)))
-
+	t.ioGroup.Wait()
+	t.stopRequest()
+	t.stopRuntime()
 	for i := len(t.cleanupFuncs) - 1; i >= 0; i-- {
 		t.cleanupFuncs[i]()
 		t.cleanupFuncs[i] = nil

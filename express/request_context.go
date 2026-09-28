@@ -60,6 +60,9 @@ func (ctx *RequestContext) reset() {
 	ctx.nextInvoked = false
 	ctx.responseSent = false
 	ctx.statusSet = false
+	for len(ctx.requestDone) > 0 {
+		<-ctx.requestDone
+	}
 	if ctx.responseProxy != nil {
 		ctx.responseProxy.reset()
 	}
@@ -154,7 +157,14 @@ func (ctx *RequestContext) next(fc goja.FunctionCall) goja.Value {
 }
 
 func (ctx *RequestContext) Wait() {
-	<-ctx.requestDone
+	select {
+	case <-ctx.requestDone:
+	case <-ctx.ioContext.RuntimeDone():
+		if !ctx.responseSent && ctx.ioContext.RequestContext().Err() == nil {
+			ctx.responseSent = true
+			http.Error(ctx.httpResp, "runtime stopped", http.StatusServiceUnavailable)
+		}
+	}
 }
 
 func (ctx *RequestContext) NativeObject() goja.Value {
@@ -170,6 +180,10 @@ func (ctx *RequestContext) Reject() goja.Value {
 }
 
 func (ctx *RequestContext) Exception(err error) {
+	if ctx.responseSent {
+		ctx.wake()
+		return
+	}
 	select {
 	case <-ctx.httpReq.Context().Done():
 	default:
@@ -182,10 +196,14 @@ func (ctx *RequestContext) Exception(err error) {
 
 func (ctx *RequestContext) getNativeContextResolver() goja.Value {
 	return ctx.nativeContextWrapper(func(w http.ResponseWriter, r *http.Request, _ goja.Value) {
-		if ctx.statusSet || ctx.responseSent {
+		if ctx.responseSent {
 			return
 		}
-		w.WriteHeader(ctx.responseProxy.statusCode)
+		status := http.StatusNoContent
+		if ctx.responseProxy != nil {
+			status = ctx.responseProxy.statusCode
+		}
+		w.WriteHeader(status)
 	})
 }
 
@@ -203,6 +221,9 @@ func (ctx *RequestContext) nativeContextWrapper(
 	fn func(w http.ResponseWriter, r *http.Request, v goja.Value),
 ) goja.Value {
 	return ctx.vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+		if ctx.ioContext.RuntimeCanceled() {
+			return goja.Undefined()
+		}
 		if ctx.nextInvoked || ctx.responseSent {
 			ctx.wake()
 			return goja.Undefined()
@@ -220,5 +241,8 @@ func (ctx *RequestContext) nativeContextWrapper(
 }
 
 func (ctx *RequestContext) wake() {
-	ctx.requestDone <- struct{}{}
+	select {
+	case ctx.requestDone <- struct{}{}:
+	default:
+	}
 }

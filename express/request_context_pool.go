@@ -36,10 +36,12 @@ func NewRequestContextPool(deps RequestContextDeps) *RequestContextPool {
 			ctxCh := make(chan *RequestContext, 1)
 			// initialization of new native variable has to be
 			// ran on the loop
-			deps.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
+			if !deps.Eventloop.RunOnLoop(func(vm *goja.Runtime) {
 				ctxNew.Add(1)
 				ctxCh <- newRequestContext(vm, deps)
-			})
+			}) {
+				return nil
+			}
 			return <-ctxCh
 		})
 	return pool
@@ -47,6 +49,9 @@ func NewRequestContextPool(deps RequestContextDeps) *RequestContextPool {
 
 func (p *RequestContextPool) Get(t *common.IOContext) *RequestContext {
 	ctx := p.ctxPool.Get()
+	if ctx == nil {
+		return nil
+	}
 	ctx.ioContext = t
 	t.RegisterCleanup(func() {
 		p.put(ctx)

@@ -6,7 +6,7 @@ declare function runtimeFetch(
 interface RuntimeFetchResult {
   statusText: string;
   statusCode: number;
-  header: Headers;
+  headers: Headers;
   body: ReadableStream;
 }
 
@@ -15,7 +15,7 @@ interface RuntimeFetchHandler {
     url: string,
     method: string,
     headers: Record<string, string>,
-    body?: ReadableStream | string
+    body?: ReadableStream | string | ArrayBuffer
   ): Promise<RuntimeFetchResult>;
 }
 
@@ -36,14 +36,16 @@ const __runtimeFetch = (
     const request = new Request(input, options);
 
     const requestBody = request as Body;
-    let useBody: ReadableStream | string | undefined;
+    let useBody: ReadableStream | string | ArrayBuffer | undefined;
     if (requestBody._bodyReadableStream) {
       useBody = requestBody._bodyReadableStream;
-    } else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+    } else if (requestBody._bodyArrayBuffer) {
+      useBody = await request.arrayBuffer();
+    } else if (requestBody._bodyText !== undefined) {
       useBody = await requestBody.text();
     }
 
-    const { statusText, statusCode, header, body } = await goWrapper.doFetch(
+    const { statusText, statusCode, headers, body } = await goWrapper.doFetch(
       request.url,
       request.method,
       (request.headers as any).map, // .map property is the backing storage of headers
@@ -53,13 +55,14 @@ const __runtimeFetch = (
     return new Response(body, {
       status: statusCode,
       statusText: statusText,
-      headers: header,
+      headers,
     });
   };
 };
 
 // this is a helper for FetchEvent.respondWith
-const __runtimeResponseHelper = async (response: Response) => {
+const __runtimeResponseHelper = async (input: Response | Promise<Response>) => {
+  const response = await input;
   if (!(response instanceof Response)) {
     return { ok: false };
   }
@@ -67,10 +70,12 @@ const __runtimeResponseHelper = async (response: Response) => {
   const { status, headers } = response;
 
   const requestBody = response as Body;
-  let useBody: ReadableStream | string | undefined;
+  let useBody: ReadableStream | string | ArrayBuffer | undefined;
   if (requestBody._bodyReadableStream) {
     useBody = requestBody._bodyReadableStream;
-  } else if (requestBody._bodyArrayBuffer || requestBody._bodyText) {
+  } else if (requestBody._bodyArrayBuffer) {
+    useBody = await response.arrayBuffer();
+  } else if (requestBody._bodyText !== undefined) {
     useBody = await requestBody.text();
   }
 

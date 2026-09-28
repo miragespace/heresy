@@ -1,9 +1,11 @@
 package heresy
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,14 +24,18 @@ import (
 )
 
 type Runtime struct {
-	logger    *zap.Logger
-	transport http.RoundTripper
-	kvManager *kv.KVManager
-	shards    []atomic.Pointer[runtimeInstance]
-	_         cpu.CacheLinePad
-	nextShard uint32
-	_         cpu.CacheLinePad
-	numShards int
+	reloadMu   sync.Mutex
+	shardMu    sync.RWMutex
+	generation uint64
+	instances  map[*runtimeInstance]struct{}
+	logger     *zap.Logger
+	transport  http.RoundTripper
+	kvManager  *kv.KVManager
+	shards     []atomic.Pointer[runtimeInstance]
+	_          cpu.CacheLinePad
+	nextShard  uint32
+	_          cpu.CacheLinePad
+	numShards  int
 }
 
 // NewRuntime returns a new heresy runtime. Use shards > 1 to enable round-robin
@@ -41,6 +47,9 @@ func NewRuntime(logger *zap.Logger, kvManager *kv.KVManager, shards int) (*Runti
 
 	if shards < 1 {
 		return nil, fmt.Errorf("shards cannot be smaller than 1")
+	}
+	if kvManager == nil {
+		kvManager = kv.NewKVManager()
 	}
 
 	t := http.DefaultTransport.(*http.Transport).Clone()
@@ -55,6 +64,7 @@ func NewRuntime(logger *zap.Logger, kvManager *kv.KVManager, shards int) (*Runti
 		transport: t,
 		shards:    make([]atomic.Pointer[runtimeInstance], shards),
 		numShards: shards,
+		instances: make(map[*runtimeInstance]struct{}),
 	}
 
 	for i := range rt.shards {
@@ -85,12 +95,25 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 	if err != nil {
 		return fmt.Errorf("error compiling script: %w", err)
 	}
+	rt.reloadMu.Lock()
+	defer rt.reloadMu.Unlock()
+	rt.shardMu.RLock()
+	generation := rt.generation
+	rt.shardMu.RUnlock()
 
 	// force GC on script reload
 	defer runtime.GC()
 
 	start := time.Now()
-	for i := range rt.shards {
+	prepared := make([]*runtimeInstance, 0, rt.numShards)
+	defer func() {
+		if err != nil {
+			for _, instance := range prepared {
+				instance.stop(true)
+			}
+		}
+	}()
+	for range rt.shards {
 		registry := require.NewRegistryWithLoader(polyfill.PolyfillFS.ReadFile)
 
 		loggerModule := console.RequireWithLogger(rt.logger)
@@ -100,13 +123,33 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 		if err != nil {
 			return err
 		}
+		prepared = append(prepared, instance)
+		rt.shardMu.Lock()
+		if rt.generation != generation {
+			rt.shardMu.Unlock()
+			return ErrRuntimeNotReady
+		}
+		rt.instances[instance] = struct{}{}
+		rt.shardMu.Unlock()
+		rt.forgetWhenStopped(instance)
 
 		err = <-instance.loadProgram(prog)
 		if err != nil {
 			return err
 		}
-
-		old := rt.shards[i].Swap(instance)
+	}
+	// Publish a complete generation and acquire request leases under the same lock.
+	rt.shardMu.Lock()
+	if rt.generation != generation {
+		rt.shardMu.Unlock()
+		return ErrRuntimeNotReady
+	}
+	previous := make([]*runtimeInstance, len(rt.shards))
+	for i, instance := range prepared {
+		previous[i] = rt.shards[i].Swap(instance)
+	}
+	rt.shardMu.Unlock()
+	for _, old := range previous {
 		if old != nilInstance {
 			old.stop(interrupt)
 		}
@@ -124,8 +167,13 @@ func (rt *Runtime) LoadScript(scriptName, script string, interrupt bool) (err er
 
 func (rt *Runtime) shardRun(fn func(index int, instance *runtimeInstance)) {
 	n := atomic.AddUint32(&rt.nextShard, 1)
-	i := int(n) % rt.numShards
+	i := int(uint64(n) % uint64(rt.numShards))
+	rt.shardMu.RLock()
 	instance := rt.shards[i].Load()
+	if instance != nilInstance {
+		instance.active.Add(1)
+	}
+	rt.shardMu.RUnlock()
 
 	fn(i, instance)
 }
@@ -139,7 +187,10 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 
 	defer func() {
 		if err != nil {
-			eventLoop.StopNoWait()
+			if instance != nil {
+				instance.cancel()
+			}
+			eventLoop.Terminate()
 		}
 	}()
 
@@ -147,7 +198,9 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 		logger:    rt.logger,
 		kv:        rt.kvManager,
 		eventLoop: eventLoop,
+		stopped:   make(chan struct{}),
 	}
+	instance.context, instance.cancel = context.WithCancel(context.Background())
 
 	var options nativeHandlerOptions
 	instance.handlerOption.Store(&options)
@@ -187,10 +240,35 @@ func (rt *Runtime) getInstance(t http.RoundTripper, registry *require.Registry) 
 }
 
 func (rt *Runtime) Stop(interrupt bool) {
+	rt.shardMu.Lock()
+	rt.generation++
 	for i := range rt.shards {
-		old := rt.shards[i].Swap(nilInstance)
-		if old != nilInstance {
-			old.stop(interrupt)
+		rt.shards[i].Store(nilInstance)
+	}
+	instances := make([]*runtimeInstance, 0, len(rt.instances))
+	for instance := range rt.instances {
+		instances = append(instances, instance)
+	}
+	rt.shardMu.Unlock()
+	for _, instance := range instances {
+		instance.stop(interrupt)
+	}
+	if interrupt {
+		for _, instance := range instances {
+			instance.active.Wait()
 		}
 	}
+	if transport, ok := rt.transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
+}
+
+func (rt *Runtime) forgetWhenStopped(instance *runtimeInstance) {
+	go func() {
+		<-instance.stopped
+		instance.active.Wait()
+		rt.shardMu.Lock()
+		delete(rt.instances, instance)
+		rt.shardMu.Unlock()
+	}()
 }

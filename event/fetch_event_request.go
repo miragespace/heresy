@@ -40,7 +40,7 @@ func newFetchEventRequest(evt *FetchEvent) *fetchEventRequest {
 
 func (req *fetchEventRequest) initializeBody() {
 	switch req.httpReq.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	case http.MethodGet, http.MethodHead:
 	default:
 		readable := req.deps.Stream.NewReadableStreamVM(req.ioContext, req.httpReq.Body, req.vm)
 		req.nativeBody = readable.NativeStream()
@@ -58,7 +58,7 @@ func (req *fetchEventRequest) reset() {
 
 func makeUrl(r *http.Request) string {
 	scheme := "http"
-	if r.TLS == nil {
+	if r.TLS != nil {
 		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL.RequestURI())

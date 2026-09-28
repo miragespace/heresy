@@ -78,9 +78,11 @@ func (p *PromiseResolver) NewPromiseFuncWithArg(
 	fn, arg, resolve, reject goja.Value,
 ) error {
 	errCh := make(chan error, 1)
-	p.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
+	if !p.eventLoop.RunOnLoop(func(vm *goja.Runtime) {
 		errCh <- p.NewPromiseFuncWithArgVM(vm, fn, arg, resolve, reject)
-	})
+	}) {
+		return fmt.Errorf("runtime event loop has stopped")
+	}
 
 	return <-errCh
 }
