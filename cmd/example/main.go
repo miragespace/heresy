@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -9,6 +10,8 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"syscall"
+	"time"
 
 	"go.miragespace.co/heresy"
 	"go.miragespace.co/heresy/extensions/kv"
@@ -36,7 +39,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer rt.Stop(true)
 
 	router := chi.NewRouter()
 	router.Mount("/debug", middleware.Profiler())
@@ -50,14 +52,15 @@ func main() {
 
 	router.Handle("/*", index)
 
-	addr := ":8081"
+	addr := "127.0.0.1:8081"
 	if len(args) > 1 {
 		addr = args[1]
 	}
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: router,
+		Addr:              addr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
@@ -66,16 +69,29 @@ func main() {
 		}
 	}()
 
-	defer srv.Shutdown(context.Background())
-
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
 
 	logger.Info("received signal to stop", zap.String("signal", (<-sig).String()))
+	// End JavaScript work before waiting for its HTTP handlers to return.
+	rt.Stop(true)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("HTTP shutdown timed out", zap.Error(err))
+		srv.Close()
+	}
 }
 
 func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			w.Header().Set("Allow", http.MethodPut)
+			http.Error(w, "Use PUT to reload a script", http.StatusMethodNotAllowed)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var form *multipart.Reader
 		form, err := r.MultipartReader()
 		if err != nil {
@@ -86,7 +102,7 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 
 		var p *multipart.Part
 		p, err = form.NextPart()
-		if err != nil && err != io.EOF {
+		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, err)
 			return
@@ -101,7 +117,12 @@ func reloadScript(logger *zap.Logger, rt *heresy.Runtime) func(w http.ResponseWr
 		var script string
 		scriptBytes, err := io.ReadAll(p)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+			var limitErr *http.MaxBytesError
+			if errors.As(err, &limitErr) {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+			}
 			fmt.Fprintf(w, "Failed to read script from body: %v", err)
 			return
 		}
